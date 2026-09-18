@@ -15,6 +15,7 @@ plus prompt -> Groq -> validated spec -> same box exporter.
 
 from __future__ import annotations
 
+import secrets
 import tempfile
 from pathlib import Path
 
@@ -24,8 +25,9 @@ from pydantic import BaseModel
 
 from .ai import groq_client
 from .cad import cadquery_engine
+from .cad.schema import BoxOperation
 
-app = FastAPI(title="cgen PoC — FastAPI + CadQuery", version="0.2.1")
+app = FastAPI(title="cgen PoC — FastAPI + CadQuery", version="0.3.0")
 
 # Prompt guardrails: empty prompts are user errors (400); very long prompts
 # are rejected before spending an AI call on them.
@@ -178,10 +180,11 @@ def test_cad_download(
 
 @app.post("/generate", response_model=GenerateResponse)
 def generate(body: GenerateRequest):
-    """Milestone 2: prompt -> Groq -> CADSpec validation -> box export.
+    """Milestone 3: prompt -> Groq -> CADSpec validation -> CAD engine.
 
-    Reuses the Milestone 1 CadQuery box exporter; this endpoint adds only
-    the language -> specification layers in front of it.
+    Box specs reuse the Milestone 1/2 box exporter (identical behavior and
+    download links); every other operation goes through the general
+    operation exporter with token-based downloads.
     """
     prompt = (body.prompt or "").strip()
     if not prompt:
@@ -202,16 +205,39 @@ def generate(body: GenerateRequest):
         raise HTTPException(status_code=422, detail=str(e))
 
     op = spec.operation
-    try:
-        result = cadquery_engine.export_box(
-            width=op.width, depth=op.depth, height=op.height
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    if isinstance(op, BoxOperation):
+        try:
+            result = cadquery_engine.export_box(
+                width=op.width, depth=op.depth, height=op.height
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        dims = f"width={op.width}&depth={op.depth}&height={op.height}"
+        download = {
+            "step": f"/test/cad/download?format=step&{dims}",
+            "stl": f"/test/cad/download?format=stl&{dims}",
+        }
+    else:
+        try:
+            result = cadquery_engine.export_operation(op, name=spec.name)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        token = secrets.token_urlsafe(16)
+        _GENERATED_FILES[token] = {
+            "step": result["step_path"],
+            "stl": result["stl_path"],
+        }
+        while len(_GENERATED_FILES) > MAX_STORED_GENERATIONS:
+            _GENERATED_FILES.pop(next(iter(_GENERATED_FILES)))
+        download = {
+            "step": f"/download/{token}?format=step",
+            "stl": f"/download/{token}?format=stl",
+        }
 
-    dims = f"width={op.width}&depth={op.depth}&height={op.height}"
     return {
         "status": "completed",
         "specification": spec.model_dump(),
@@ -220,8 +246,34 @@ def generate(body: GenerateRequest):
             "step_bytes": result["step_bytes"],
             "stl_bytes": result["stl_bytes"],
         },
-        "download": {
-            "step": f"/test/cad/download?format=step&{dims}",
-            "stl": f"/test/cad/download?format=stl&{dims}",
-        },
+        "download": download,
     }
+
+
+# Token -> {"step": path, "stl": path} for non-box /generate downloads.
+# Ephemeral (Render Free disk) and single-process by design for this milestone;
+# entries are reaped by count and die with the instance.
+_GENERATED_FILES: dict[str, dict[str, str]] = {}
+MAX_STORED_GENERATIONS = 200
+
+
+@app.get("/download/{token}")
+def download_generated(
+    token: str,
+    format: str = Query("step", pattern="^(step|stl)$"),
+):
+    """Download a STEP/STL file produced by a non-box /generate request."""
+    entry = _GENERATED_FILES.get(token)
+    if entry is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Download link expired or unknown. Re-run /generate.",
+        )
+    path = Path(entry.get(format, ""))
+    if not path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="Generated file no longer available. Re-run /generate.",
+        )
+    media_type = "application/step" if format == "step" else "model/stl"
+    return FileResponse(str(path), media_type=media_type, filename=f"{token}.{format}")

@@ -202,7 +202,19 @@ def test_groq_uses_json_mode_and_system_prompt(monkeypatch):
     assert captured["response_format"] == {"type": "json_object"}
     assert captured["temperature"] == 0
     system_text = captured["messages"][0]["content"]
-    for required in ("JSON ONLY", "NEVER return Python", "ONLY \"box\"", "millimeters"):
+    for required in (
+        "JSON ONLY",
+        "NEVER return Python",
+        '"box"',
+        '"cylinder"',
+        '"cone"',
+        '"sphere"',
+        '"union"',
+        '"cut"',
+        '"through"',
+        "RADIUS",
+        "millimeters",
+    ):
         assert required in system_text
 
 
@@ -277,3 +289,130 @@ def test_milestone1_endpoints_still_alive(monkeypatch):
 
     monkeypatch.setattr(groq_client, "parse_prompt_to_spec", fail_if_called)
     assert client.get("/health").status_code == 200
+
+
+# --- Milestone 3: new operation types through /generate (all mocked) -------
+
+
+def test_generate_cylinder_mocked(monkeypatch):
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "shaft",
+            "operation": {"type": "cylinder", "radius": 15, "height": 120},
+        }
+    )
+    seen = {}
+
+    def fake_export(operation, name="part", out_dir=None):
+        seen["op"] = operation
+        seen["name"] = name
+        return {
+            "operation": "cylinder",
+            "step_bytes": 111,
+            "stl_bytes": 222,
+            "step_path": "/tmp/x.step",
+            "stl_path": "/tmp/x.stl",
+        }
+
+    monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
+    monkeypatch.setattr("app.main.cadquery_engine.export_operation", fake_export)
+
+    r = client.post(
+        "/generate",
+        json={"prompt": "Create a cylinder 120mm tall with a diameter of 30mm."},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["specification"]["operation"]["type"] == "cylinder"
+    assert body["files"] == {"step_bytes": 111, "stl_bytes": 222}
+    assert seen["op"].radius == 15
+    assert seen["name"] == "shaft"
+    assert body["download"]["step"].startswith("/download/")
+    assert body["download"]["stl"].startswith("/download/")
+
+
+def test_generate_cut_mocked(monkeypatch):
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "shaft_with_hole",
+            "operation": {
+                "type": "cut",
+                "base": {"type": "cylinder", "radius": 15, "height": 120},
+                "tool": {
+                    "type": "cylinder",
+                    "radius": 7.5,
+                    "height": 120,
+                    "through": True,
+                },
+            },
+        }
+    )
+
+    def fake_export(operation, name="part", out_dir=None):
+        assert operation.type == "cut"
+        assert operation.tool.through is True
+        return {
+            "operation": "cut",
+            "step_bytes": 333,
+            "stl_bytes": 444,
+            "step_path": "/tmp/y.step",
+            "stl_path": "/tmp/y.stl",
+        }
+
+    monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
+    monkeypatch.setattr("app.main.cadquery_engine.export_operation", fake_export)
+
+    r = client.post(
+        "/generate",
+        json={
+            "prompt": "Create a 120mm long shaft with a 30mm diameter "
+            "and a 15mm hole through the center."
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["specification"]["operation"]["type"] == "cut"
+
+
+def test_generate_nonbox_download_roundtrip(monkeypatch, tmp_path):
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "ball",
+            "operation": {"type": "sphere", "radius": 25},
+        }
+    )
+    step_file = tmp_path / "ball.step"
+    stl_file = tmp_path / "ball.stl"
+    step_file.write_bytes(b"ISO-10303-21; fake step")
+    stl_file.write_bytes(b"solid fake stl")
+
+    def fake_export(operation, name="part", out_dir=None):
+        return {
+            "operation": "sphere",
+            "step_bytes": step_file.stat().st_size,
+            "stl_bytes": stl_file.stat().st_size,
+            "step_path": str(step_file),
+            "stl_path": str(stl_file),
+        }
+
+    monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
+    monkeypatch.setattr("app.main.cadquery_engine.export_operation", fake_export)
+
+    r = client.post("/generate", json={"prompt": "Create a sphere of radius 25mm."})
+    assert r.status_code == 200, r.text
+    links = r.json()["download"]
+
+    dl = client.get(links["step"])
+    assert dl.status_code == 200, dl.text
+    assert b"ISO-10303" in dl.content
+    dl = client.get(links["stl"])
+    assert dl.status_code == 200, dl.text
+
+
+def test_download_unknown_token_404():
+    assert client.get("/download/does-not-exist?format=step").status_code == 404
