@@ -1,0 +1,7 @@
+# Pinned for Render Free PoC. Python version is set in Dockerfile (3.12).
+# cadquery pulls cadquery-ocp (OCCT bindings) as a binary wheel — no local compile.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+cadquery==2.8.0
+pytest==8.3.4
+httpx==0.28.1

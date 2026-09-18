@@ -1,0 +1,14 @@
+# Render blueprint for the Milestone 1 PoC (Free tier).
+# Deploy: push to GitHub, then Render Dashboard -> New -> Blueprint -> select repo.
+# Or: New -> Web Service -> Docker -> point at backend/Dockerfile.
+services:
+  - type: web
+    name: cgen-poc
+    runtime: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000
