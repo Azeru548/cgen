@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BootScreen, type BootChecks } from "@/components/BootScreen";
 import { CadViewport } from "@/components/cad/CadViewport";
 import type { PreviewState } from "@/components/cad/StlModel";
 import { Downloads } from "@/components/Downloads";
 import { GeneratePanel } from "@/components/GeneratePanel";
+import { GenerationLoader } from "@/components/GenerationLoader";
 import { SpecPanel } from "@/components/SpecPanel";
 import {
   checkBackendHealth,
@@ -16,6 +18,22 @@ import {
 import type { BackendHealth, GenerateResponse } from "@/types/api";
 
 type PageStatus = "idle" | "generating" | "ready" | "error";
+type EngineState = "ready" | "processing" | "error" | "unknown";
+
+const SCHEMA_VERSION = "M6 · SCHEMA 3.0";
+
+function detectWebgl(): boolean {
+  try {
+    const canvas = document.createElement("canvas");
+    return Boolean(
+      canvas.getContext("webgl2") ??
+        canvas.getContext("webgl") ??
+        canvas.getContext("experimental-webgl"),
+    );
+  } catch {
+    return false;
+  }
+}
 
 export default function Home() {
   const [prompt, setPrompt] = useState("");
@@ -25,12 +43,24 @@ export default function Home() {
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [health, setHealth] = useState<BackendHealth | null>(null);
+  const [booting, setBooting] = useState(true);
+  const [bootChecks, setBootChecks] = useState<BootChecks>({
+    schema: false,
+    renderer: false,
+    engine: false,
+  });
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     checkBackendHealth().then((info) => {
-      if (!cancelled) setHealth(info);
+      if (cancelled) return;
+      setHealth(info);
+      setBootChecks({
+        schema: true,
+        renderer: detectWebgl(),
+        engine: info !== null,
+      });
     });
     return () => {
       cancelled = true;
@@ -66,20 +96,56 @@ export default function Home() {
     }
   }, [prompt, status]);
 
-  const handlePreviewStatus = useCallback((state: PreviewState, message?: string) => {
-    if (state === "error") {
-      setPreviewError(
-        message ?? "The preview mesh could not be loaded. Downloads still work.",
-      );
-    } else if (state === "loading") {
-      setPreviewError(null);
-    }
-  }, []);
+  const handlePreviewStatus = useCallback(
+    (state: PreviewState, message?: string) => {
+      if (state === "error") {
+        setPreviewError(
+          message ?? "The preview mesh could not be loaded. Downloads still work.",
+        );
+      } else if (state === "loading") {
+        setPreviewError(null);
+      }
+    },
+    [],
+  );
+
+  const handleBootDone = useCallback(() => setBooting(false), []);
 
   const busy = status === "generating";
 
+  const engineState: EngineState = busy
+    ? "processing"
+    : status === "error"
+      ? "error"
+      : health === null
+        ? "unknown"
+        : health.cadquery_available
+          ? "ready"
+          : "error";
+
+  const engineLabel = useMemo(() => {
+    switch (engineState) {
+      case "ready":
+        return "ENGINE READY";
+      case "processing":
+        return "ENGINE PROCESSING";
+      case "error":
+        return "ENGINE ERROR";
+      default:
+        return "ENGINE STANDBY";
+    }
+  }, [engineState]);
+
+  const engineTitle = health
+    ? `Backend ${health.status} · CadQuery ${health.cadquery_version ?? "unknown"}`
+    : "Backend status unknown";
+
   return (
     <div className="workspace">
+      {booting ? (
+        <BootScreen checks={bootChecks} onDone={handleBootDone} />
+      ) : null}
+
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
@@ -91,28 +157,31 @@ export default function Home() {
           </span>
         </div>
         <div
-          className={`health-pill ${health?.cadquery_available ? "ok" : "unknown"}`}
-          title={
-            health
-              ? `Backend reachable · CadQuery ${health.cadquery_version ?? "unknown"}`
-              : "Backend status unknown"
-          }
+          className={`engine-pill ${engineState}`}
+          title={engineTitle}
+          role="status"
         >
-          <span className="health-dot" aria-hidden="true" />
-          {health?.cadquery_available
-            ? `API ready · CQ ${health.cadquery_version ?? "?"}`
-            : "API status…"}
+          <span className="engine-dot" aria-hidden="true" />
+          {engineLabel}
         </div>
       </header>
 
       <main className="layout">
-        <CadViewport
-          stlUrl={stlUrl}
-          busy={busy}
-          previewError={previewError}
-          onPreviewStatus={handlePreviewStatus}
-          onSelectExample={setPrompt}
-        />
+        <div className="viewport-column">
+          <CadViewport
+            stlUrl={stlUrl}
+            busy={busy}
+            previewError={previewError}
+            onPreviewStatus={handlePreviewStatus}
+            onSelectExample={setPrompt}
+            schemaVersion={SCHEMA_VERSION}
+          />
+          {busy ? (
+            <div className="generation-loader-dock">
+              <GenerationLoader />
+            </div>
+          ) : null}
+        </div>
         <aside className="sidebar">
           <GeneratePanel
             prompt={prompt}
@@ -126,9 +195,14 @@ export default function Home() {
         </aside>
       </main>
 
-      <footer className="footnote">
-        STEP is the authoritative CAD artifact · STL renders the browser preview ·
-        AI produces structured specifications, never executable code
+      <footer className="meta-tape">
+        <span>SCHEMA {SCHEMA_VERSION}</span>
+        <span className="sep">|</span>
+        <span>STEP AUTHORITATIVE · STL PREVIEW MESH</span>
+        <span className="sep">|</span>
+        <span>AI EMITS SPECIFICATIONS — NEVER EXECUTABLE CODE</span>
+        <span className="sep">|</span>
+        <span aria-hidden="true">REV 2026</span>
       </footer>
     </div>
   );

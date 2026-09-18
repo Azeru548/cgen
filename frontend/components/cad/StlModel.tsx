@@ -71,7 +71,7 @@ export function StlModel({ url, onStatus, onGeometry }: StlModelProps) {
   if (!geometry) return null;
   return (
     <mesh geometry={geometry}>
-      <meshStandardMaterial color="#8fb4d8" metalness={0.15} roughness={0.55} />
+      <meshStandardMaterial color="#4a4d47" metalness={0.35} roughness={0.45} />
     </mesh>
   );
 }

@@ -3,8 +3,14 @@
 import { Suspense, useCallback, useState } from "react";
 import * as THREE from "three";
 import { Canvas } from "@react-three/fiber";
-import { Grid, OrbitControls } from "@react-three/drei";
+import {
+  GizmoHelper,
+  GizmoViewport,
+  Grid,
+  OrbitControls,
+} from "@react-three/drei";
 import { FrameCamera, StlModel, type PreviewState } from "./StlModel";
+import { GenerationLoader } from "../GenerationLoader";
 
 export const EXAMPLE_PROMPTS = [
   "Create a 100mm × 60mm × 30mm rectangular block.",
@@ -18,6 +24,8 @@ interface CadViewportProps {
   previewError: string | null;
   onPreviewStatus: (state: PreviewState, message?: string) => void;
   onSelectExample: (prompt: string) => void;
+  /** Technical chip text shown top-left (schema/engine revision). */
+  schemaVersion?: string;
 }
 
 export function CadViewport({
@@ -26,6 +34,7 @@ export function CadViewport({
   previewError,
   onPreviewStatus,
   onSelectExample,
+  schemaVersion,
 }: CadViewportProps) {
   const [geometry, setGeometry] = useState<THREE.BufferGeometry | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
@@ -40,10 +49,10 @@ export function CadViewport({
         dpr={[1, 2]}
         gl={{ antialias: true }}
       >
-        <color attach="background" args={["#141a21"]} />
-        <ambientLight intensity={0.75} />
-        <directionalLight position={[120, 180, 90]} intensity={1.6} />
-        <directionalLight position={[-100, 60, -120]} intensity={0.35} />
+        <color attach="background" args={["#f0f0eb"]} />
+        <ambientLight intensity={0.85} />
+        <directionalLight position={[120, 180, 90]} intensity={1.35} />
+        <directionalLight position={[-100, 60, -120]} intensity={0.45} />
         <Suspense fallback={null}>
           {stlUrl ? (
             <StlModel
@@ -62,10 +71,10 @@ export function CadViewport({
             args={[10, 10]}
             cellSize={10}
             cellThickness={0.6}
-            cellColor="#232d38"
+            cellColor="#d9d9d2"
             sectionSize={50}
             sectionThickness={1}
-            sectionColor="#33405299"
+            sectionColor="#b9b9ae"
             fadeDistance={1400}
             fadeStrength={2}
             infiniteGrid
@@ -78,10 +87,22 @@ export function CadViewport({
           minDistance={5}
           maxDistance={5000}
         />
+        <GizmoHelper alignment="top-right" margin={[56, 56]}>
+          <GizmoViewport
+            axisColors={["#c0392b", "#198754", "#3157ff"]}
+            labelColor="#171816"
+          />
+        </GizmoHelper>
       </Canvas>
 
+      {schemaVersion ? (
+        <span className="viewport-tag">{schemaVersion}</span>
+      ) : null}
+
       <div className="viewport-toolbar">
-        <span className="viewport-hint">drag&nbsp;·&nbsp;orbit&nbsp;&nbsp;&nbsp;wheel&nbsp;·&nbsp;zoom&nbsp;&nbsp;&nbsp;right-drag&nbsp;·&nbsp;pan</span>
+        <span className="viewport-hint">
+          drag&nbsp;·&nbsp;orbit&nbsp;&nbsp;&nbsp;wheel&nbsp;·&nbsp;zoom&nbsp;&nbsp;&nbsp;right-drag&nbsp;·&nbsp;pan
+        </span>
         <button
           type="button"
           className="viewport-reset"
@@ -116,11 +137,12 @@ export function CadViewport({
       ) : null}
 
       {busy ? (
-        <div className="viewport-overlay" role="status" data-testid="viewport-loading">
-          <p className="overlay-title">Generating CAD…</p>
-          <p className="overlay-text">
-            Interpreting the prompt and building geometry.
-          </p>
+        <div
+          className="viewport-overlay viewport-overlay-busy"
+          role="status"
+          data-testid="viewport-loading"
+        >
+          <GenerationLoader />
         </div>
       ) : null}
 

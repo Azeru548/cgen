@@ -12,8 +12,10 @@ export function Downloads({ result }: DownloadsProps) {
   const entries = [result.files.step, result.files.stl];
   return (
     <section className="panel" aria-labelledby="files-heading" data-testid="files-panel">
-      <h2 id="files-heading" className="panel-title">
-        Files
+      <h2 id="files-heading" className="kicker">
+        <span className="kicker-index">04</span>
+        <span className="kicker-label">Output</span>
+        <span className="kicker-rule" aria-hidden="true" />
       </h2>
       <ul className="file-list">
         {entries.map((file) => (
