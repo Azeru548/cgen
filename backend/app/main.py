@@ -1,49 +1,73 @@
 """Milestone 1 PoC: FastAPI + CadQuery on Render Free.
 Milestone 2: + POST /generate (Groq prompt -> validated CADSpec -> box export).
+Milestone 3: + multi-operation CAD (box/cylinder/cone/sphere/union/cut).
+Milestone 4: + production-grade generation API (clean contract, file store,
+  request IDs, timing, structured logging).
 
 Endpoints (Milestone 1, unchanged):
   GET /health    -> liveness, reports whether CadQuery imports OK
   GET /test/cad  -> create 100x60x30mm box, export STEP+STL, return metadata
   GET /test/cad/download?format=step|stl -> generate box and return the file
 
-Milestone 2:
-  POST /generate -> natural-language prompt -> Groq -> CADSpec -> box export
+Milestone 4:
+  POST /generate      -> prompt -> Groq -> CADSpec -> CAD engine -> files
+  GET /download/{token} -> download a generated STEP/STL pair by token
 
-No auth, no DB. Only proves: FastAPI -> CadQuery -> export -> download,
-plus prompt -> Groq -> validated spec -> same box exporter.
+No auth, no DB. Ephemeral disk only.
 """
 
 from __future__ import annotations
 
-import secrets
+import logging
 import tempfile
+import uuid
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .ai import groq_client
-from .cad import cadquery_engine
-from .cad.schema import BoxOperation
+from .services.file_store import FileStore
+from .services.generation import InvalidPromptError, run_generation
 
-app = FastAPI(title="cgen PoC — FastAPI + CadQuery", version="0.3.0")
+logger = logging.getLogger("cgen.api")
 
-# Prompt guardrails: empty prompts are user errors (400); very long prompts
-# are rejected before spending an AI call on them.
-MAX_PROMPT_LENGTH = 2000
+app = FastAPI(title="cgen PoC — FastAPI + CadQuery", version="0.4.0")
+
+# Re-exported for backwards compatibility (tests import it from here).
+from .services.generation import MAX_PROMPT_LENGTH  # noqa: E402
+
+# Token -> generated STEP/STL pairs for /generate downloads. Ephemeral and
+# single-process by design; entries expire and are count-capped (see
+# services/file_store.py). No database, no object storage in this milestone.
+file_store = FileStore()
 
 
 class GenerateRequest(BaseModel):
-    prompt: str
+    prompt: str = Field(
+        description="Natural-language description of the 3D part to generate. "
+        "1-2000 characters; dimensions in any common unit (normalized to mm)."
+    )
+
+
+class FileMetadata(BaseModel):
+    format: Literal["step", "stl"] = Field(description="CAD file format.")
+    filename: str = Field(description="Sanitized public filename, e.g. shaft.step.")
+    bytes: int = Field(description="File size in bytes.")
+    download_url: str = Field(description="Relative URL to download this file.")
 
 
 class GenerateResponse(BaseModel):
-    status: str
-    specification: dict
-    units: str
-    files: dict
-    download: dict
+    status: Literal["completed"] = Field(description="Always 'completed' on success.")
+    request_id: str = Field(description="Random ID for this request; see server logs.")
+    specification: dict = Field(description="Validated CAD specification (schema v2.0).")
+    units: str = Field(description="Length unit used throughout: mm.")
+    generation_time_ms: int = Field(description="Total backend generation time.")
+    files: dict[str, FileMetadata] = Field(
+        description="Generated files keyed by 'step' and 'stl'."
+    )
 
 
 @app.get("/health")
@@ -178,102 +202,87 @@ def test_cad_download(
     return FileResponse(str(path), media_type=media_type, filename=path.name)
 
 
-@app.post("/generate", response_model=GenerateResponse)
+@app.post(
+    "/generate",
+    response_model=GenerateResponse,
+    responses={
+        400: {"description": "Invalid request: empty or oversized prompt."},
+        422: {"description": "AI specification failed CAD validation."},
+        500: {"description": "Server misconfiguration or CAD generation failure."},
+        502: {"description": "Groq API failure (auth, model, rate limit, network)."},
+    },
+)
 def generate(body: GenerateRequest):
-    """Milestone 3: prompt -> Groq -> CADSpec validation -> CAD engine.
+    """Generate a 3D part from a natural-language prompt.
 
-    Box specs reuse the Milestone 1/2 box exporter (identical behavior and
-    download links); every other operation goes through the general
-    operation exporter with token-based downloads.
+    Pipeline: prompt -> Groq structured CAD spec -> Pydantic validation ->
+    deterministic CadQuery engine -> validated STEP/STL + download tokens.
+    Groq never produces executable code; only validated data reaches CAD.
     """
-    prompt = (body.prompt or "").strip()
-    if not prompt:
-        raise HTTPException(status_code=400, detail="prompt must not be empty.")
-    if len(body.prompt) > MAX_PROMPT_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"prompt is too long (max {MAX_PROMPT_LENGTH} characters).",
-        )
-
+    request_id = uuid.uuid4().hex
     try:
-        spec = groq_client.parse_prompt_to_spec(prompt)
+        result = run_generation(
+            body.prompt, request_id=request_id, file_store=file_store
+        )
+    except InvalidPromptError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except groq_client.GroqConfigError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except groq_client.AIGenerationError as e:
         raise HTTPException(status_code=502, detail=str(e))
     except groq_client.SpecValidationError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    op = spec.operation
-    if isinstance(op, BoxOperation):
-        try:
-            result = cadquery_engine.export_box(
-                width=op.width, depth=op.depth, height=op.height
+    return GenerateResponse(
+        status="completed",
+        request_id=result.request_id,
+        specification=result.specification,
+        units=result.units,
+        generation_time_ms=result.generation_time_ms,
+        files={
+            key: FileMetadata(
+                format=meta.format,
+                filename=meta.filename,
+                bytes=meta.bytes,
+                download_url=meta.download_url,
             )
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e))
-        except RuntimeError as e:
-            raise HTTPException(status_code=500, detail=str(e))
-        dims = f"width={op.width}&depth={op.depth}&height={op.height}"
-        download = {
-            "step": f"/test/cad/download?format=step&{dims}",
-            "stl": f"/test/cad/download?format=stl&{dims}",
-        }
-    else:
-        try:
-            result = cadquery_engine.export_operation(op, name=spec.name)
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e))
-        except RuntimeError as e:
-            raise HTTPException(status_code=500, detail=str(e))
-        token = secrets.token_urlsafe(16)
-        _GENERATED_FILES[token] = {
-            "step": result["step_path"],
-            "stl": result["stl_path"],
-        }
-        while len(_GENERATED_FILES) > MAX_STORED_GENERATIONS:
-            _GENERATED_FILES.pop(next(iter(_GENERATED_FILES)))
-        download = {
-            "step": f"/download/{token}?format=step",
-            "stl": f"/download/{token}?format=stl",
-        }
-
-    return {
-        "status": "completed",
-        "specification": spec.model_dump(),
-        "units": spec.units,
-        "files": {
-            "step_bytes": result["step_bytes"],
-            "stl_bytes": result["stl_bytes"],
+            for key, meta in result.files.items()
         },
-        "download": download,
-    }
+    )
 
 
-# Token -> {"step": path, "stl": path} for non-box /generate downloads.
-# Ephemeral (Render Free disk) and single-process by design for this milestone;
-# entries are reaped by count and die with the instance.
-_GENERATED_FILES: dict[str, dict[str, str]] = {}
-MAX_STORED_GENERATIONS = 200
+@app.get(
+    "/download/{token}",
+    responses={
+        400: {"description": "Unsupported format (only 'step' or 'stl')."},
+        404: {"description": "Unknown/expired token or missing file."},
+    },
+)
+def download_generated(token: str, format: str = Query("step")):
+    """Download a STEP/STL file produced by a /generate request.
 
-
-@app.get("/download/{token}")
-def download_generated(
-    token: str,
-    format: str = Query("step", pattern="^(step|stl)$"),
-):
-    """Download a STEP/STL file produced by a non-box /generate request."""
-    entry = _GENERATED_FILES.get(token)
-    if entry is None:
+    `token` is an opaque lookup key only — it is never interpreted as a
+    filesystem path, so traversal and arbitrary-file access are impossible.
+    """
+    token_tag = (token[:8] + "...") if isinstance(token, str) and token else "?"
+    if format not in ("step", "stl"):
+        logger.warning("download_failed token=%s reason=bad_format", token_tag)
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported format. Use 'step' or 'stl'.",
+        )
+    path = file_store.resolve(token, format)
+    if path is None:
+        logger.warning("download_failed token=%s reason=unknown_token", token_tag)
         raise HTTPException(
             status_code=404,
             detail="Download link expired or unknown. Re-run /generate.",
         )
-    path = Path(entry.get(format, ""))
-    if not path.is_file():
-        raise HTTPException(
-            status_code=404,
-            detail="Generated file no longer available. Re-run /generate.",
-        )
+    filename = file_store.filename_for(token, format) or f"part.{format}"
+    logger.info("download_requested token=%s format=%s", token_tag, format)
     media_type = "application/step" if format == "step" else "model/stl"
-    return FileResponse(str(path), media_type=media_type, filename=f"{token}.{format}")
+    return FileResponse(str(path), media_type=media_type, filename=filename)

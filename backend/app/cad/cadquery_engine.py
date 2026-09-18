@@ -173,6 +173,70 @@ def _slugify(name: str) -> str:
     return (slug or "part")[:50]
 
 
+def _file_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _head_contains(path: Path, marker: bytes, limit: int) -> bool:
+    try:
+        with path.open("rb") as f:
+            return marker in f.read(limit)
+    except OSError:
+        return False
+
+
+def _stl_structure_ok(path: Path) -> bool:
+    """Plausibility check for our exporter's STL output (no full parser).
+
+    ASCII STL starts with "solid" and ends with an "endsolid" trailer;
+    binary STL has an 84-byte header followed by 50-byte facet records.
+    Only head/tail bytes are read, never the whole file.
+    """
+    try:
+        size = path.stat().st_size
+        if size <= 0:
+            return False
+        with path.open("rb") as f:
+            head = f.read(128)
+        if head.startswith(b"solid"):
+            try:
+                with path.open("rb") as f:
+                    f.seek(max(0, size - 128))
+                    tail = f.read(128)
+                return b"endsolid" in tail
+            except OSError:
+                return False
+        return size >= 84 and (size - 84) % 50 == 0
+    except OSError:
+        return False
+
+
+def validate_exported_files(step_path: str | Path, stl_path: str | Path) -> dict:
+    """Verify exported STEP/STL files are sane; raise RuntimeError otherwise.
+
+    Checks: both exist, both non-empty, STEP carries the ISO-10303 magic,
+    STL has a plausible ASCII/binary structure. The error message names only
+    the failed checks — never filesystem paths.
+    """
+    step = Path(step_path)
+    stl = Path(stl_path)
+    checks = {
+        "step_exists": step.is_file(),
+        "step_non_empty": _file_size(step) > 0,
+        "step_magic_ok": _head_contains(step, b"ISO-10303", 64),
+        "stl_exists": stl.is_file(),
+        "stl_non_empty": _file_size(stl) > 0,
+        "stl_structure_ok": _stl_structure_ok(stl),
+    }
+    failed = sorted(name for name, ok in checks.items() if not ok)
+    if failed:
+        raise RuntimeError(f"Export validation failed: {', '.join(failed)}")
+    return checks
+
+
 def _export_solid(solid, stem: str, out_dir: str | Path | None) -> dict:
     cq = _require_cq()
     target = Path(out_dir) if out_dir else Path(tempfile.mkdtemp(prefix="cgen_"))

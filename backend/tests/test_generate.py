@@ -214,11 +214,21 @@ def test_groq_uses_json_mode_and_system_prompt(monkeypatch):
         '"through"',
         "RADIUS",
         "millimeters",
+        "snake_case",
     ):
         assert required in system_text
 
 
-def test_generate_success_path_mocked(monkeypatch):
+def _write_valid_pair(tmp_path, stem="part"):
+    """Write a minimal valid STEP/STL pair; return (step_path, stl_path)."""
+    step = tmp_path / f"{stem}.step"
+    stl = tmp_path / f"{stem}.stl"
+    step.write_bytes(b"ISO-10303-21;\nFAKE STEP FOR TESTS\n")
+    stl.write_bytes(b"solid test\nendsolid test\n")
+    return str(step), str(stl)
+
+
+def test_generate_success_path_mocked(monkeypatch, tmp_path):
     spec = CADSpec.model_validate(
         {
             "document_type": "3d_part",
@@ -228,6 +238,7 @@ def test_generate_success_path_mocked(monkeypatch):
         }
     )
     seen = {}
+    step_path, stl_path = _write_valid_pair(tmp_path, stem="box_100x60x30")
 
     def fake_parse(prompt):
         seen["prompt"] = prompt
@@ -235,10 +246,15 @@ def test_generate_success_path_mocked(monkeypatch):
 
     def fake_export(*, width, depth, height):
         seen["dims"] = (width, depth, height)
-        return {"step_bytes": 1234, "stl_bytes": 5678}
+        return {
+            "step_path": step_path,
+            "stl_path": stl_path,
+            "step_bytes": 1234,
+            "stl_bytes": 5678,
+        }
 
     monkeypatch.setattr(groq_client, "parse_prompt_to_spec", fake_parse)
-    monkeypatch.setattr("app.main.cadquery_engine.export_box", fake_export)
+    monkeypatch.setattr("app.services.generation.cadquery_engine.export_box", fake_export)
 
     r = client.post(
         "/generate",
@@ -253,10 +269,19 @@ def test_generate_success_path_mocked(monkeypatch):
         "depth": 60.0,
         "height": 30.0,
     }
-    assert body["files"] == {"step_bytes": 1234, "stl_bytes": 5678}
     assert seen["dims"] == (100.0, 60.0, 30.0)
-    assert "format=step" in body["download"]["step"]
-    assert "format=stl" in body["download"]["stl"]
+    # M4 contract: files carry metadata + download URLs; legacy keys are gone.
+    assert set(body["files"]) == {"step", "stl"}
+    assert "download" not in body
+    step = body["files"]["step"]
+    assert step["format"] == "step"
+    assert step["filename"] == "rectangular_block.step"
+    assert step["bytes"] > 0
+    assert step["download_url"].startswith("/download/")
+    assert "format=step" in step["download_url"]
+    assert body["units"] == "mm"
+    assert isinstance(body["request_id"], str) and body["request_id"]
+    assert body["generation_time_ms"] >= 0
 
 
 def test_generate_cad_failure_is_server_error(monkeypatch):
@@ -276,7 +301,7 @@ def test_generate_cad_failure_is_server_error(monkeypatch):
     def fail_export(*, width, depth, height):
         raise RuntimeError("CadQuery is not available: No module named 'cadquery'")
 
-    monkeypatch.setattr("app.main.cadquery_engine.export_box", fail_export)
+    monkeypatch.setattr("app.services.generation.cadquery_engine.export_box", fail_export)
     r = client.post("/generate", json={"prompt": "Create a small block."})
     assert r.status_code == 500, r.text
     assert "Traceback" not in r.text
@@ -294,7 +319,7 @@ def test_milestone1_endpoints_still_alive(monkeypatch):
 # --- Milestone 3: new operation types through /generate (all mocked) -------
 
 
-def test_generate_cylinder_mocked(monkeypatch):
+def test_generate_cylinder_mocked(monkeypatch, tmp_path):
     spec = CADSpec.model_validate(
         {
             "document_type": "3d_part",
@@ -304,6 +329,7 @@ def test_generate_cylinder_mocked(monkeypatch):
         }
     )
     seen = {}
+    step_path, stl_path = _write_valid_pair(tmp_path, stem="shaft_cylinder")
 
     def fake_export(operation, name="part", out_dir=None):
         seen["op"] = operation
@@ -312,12 +338,12 @@ def test_generate_cylinder_mocked(monkeypatch):
             "operation": "cylinder",
             "step_bytes": 111,
             "stl_bytes": 222,
-            "step_path": "/tmp/x.step",
-            "stl_path": "/tmp/x.stl",
+            "step_path": step_path,
+            "stl_path": stl_path,
         }
 
     monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
-    monkeypatch.setattr("app.main.cadquery_engine.export_operation", fake_export)
+    monkeypatch.setattr("app.services.generation.cadquery_engine.export_operation", fake_export)
 
     r = client.post(
         "/generate",
@@ -326,14 +352,14 @@ def test_generate_cylinder_mocked(monkeypatch):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["specification"]["operation"]["type"] == "cylinder"
-    assert body["files"] == {"step_bytes": 111, "stl_bytes": 222}
     assert seen["op"].radius == 15
     assert seen["name"] == "shaft"
-    assert body["download"]["step"].startswith("/download/")
-    assert body["download"]["stl"].startswith("/download/")
+    assert body["files"]["step"]["download_url"].startswith("/download/")
+    assert body["files"]["stl"]["download_url"].startswith("/download/")
+    assert body["files"]["step"]["filename"] == "shaft.step"
 
 
-def test_generate_cut_mocked(monkeypatch):
+def test_generate_cut_mocked(monkeypatch, tmp_path):
     spec = CADSpec.model_validate(
         {
             "document_type": "3d_part",
@@ -355,16 +381,17 @@ def test_generate_cut_mocked(monkeypatch):
     def fake_export(operation, name="part", out_dir=None):
         assert operation.type == "cut"
         assert operation.tool.through is True
+        step_path, stl_path = _write_valid_pair(tmp_path, stem="cut_tmp")
         return {
             "operation": "cut",
             "step_bytes": 333,
             "stl_bytes": 444,
-            "step_path": "/tmp/y.step",
-            "stl_path": "/tmp/y.stl",
+            "step_path": step_path,
+            "stl_path": stl_path,
         }
 
     monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
-    monkeypatch.setattr("app.main.cadquery_engine.export_operation", fake_export)
+    monkeypatch.setattr("app.services.generation.cadquery_engine.export_operation", fake_export)
 
     r = client.post(
         "/generate",
@@ -389,7 +416,7 @@ def test_generate_nonbox_download_roundtrip(monkeypatch, tmp_path):
     step_file = tmp_path / "ball.step"
     stl_file = tmp_path / "ball.stl"
     step_file.write_bytes(b"ISO-10303-21; fake step")
-    stl_file.write_bytes(b"solid fake stl")
+    stl_file.write_bytes(b"solid ball\nfacet normal 0 0 0\nendsolid ball\n")
 
     def fake_export(operation, name="part", out_dir=None):
         return {
@@ -401,18 +428,137 @@ def test_generate_nonbox_download_roundtrip(monkeypatch, tmp_path):
         }
 
     monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
-    monkeypatch.setattr("app.main.cadquery_engine.export_operation", fake_export)
+    monkeypatch.setattr("app.services.generation.cadquery_engine.export_operation", fake_export)
 
     r = client.post("/generate", json={"prompt": "Create a sphere of radius 25mm."})
     assert r.status_code == 200, r.text
-    links = r.json()["download"]
+    files = r.json()["files"]
 
-    dl = client.get(links["step"])
+    dl = client.get(files["step"]["download_url"])
     assert dl.status_code == 200, dl.text
     assert b"ISO-10303" in dl.content
-    dl = client.get(links["stl"])
+    assert "ball.step" in dl.headers.get("content-disposition", "")
+    dl = client.get(files["stl"]["download_url"])
     assert dl.status_code == 200, dl.text
 
 
 def test_download_unknown_token_404():
     assert client.get("/download/does-not-exist?format=step").status_code == 404
+
+
+# --- Milestone 4: hardened download endpoint --------------------------------
+
+
+def test_download_invalid_format_400(monkeypatch, tmp_path):
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "cube",
+            "operation": {"type": "box", "width": 10, "depth": 10, "height": 10},
+        }
+    )
+    step_path, stl_path = _write_valid_pair(tmp_path, stem="fmt_tmp")
+
+    def fake_export(*, width, depth, height):
+        return {"step_path": step_path, "stl_path": stl_path}
+
+    monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
+    monkeypatch.setattr("app.services.generation.cadquery_engine.export_box", fake_export)
+    token = (
+        client.post("/generate", json={"prompt": "cube"})
+        .json()["files"]["step"]["download_url"]
+        .split("/download/")[1]
+        .split("?")[0]
+    )
+    for bad_format in ("binary", "STEP", "stl ", "", "step%00"):
+        r = client.get(f"/download/{token}?format={bad_format}")
+        assert r.status_code == 400, (bad_format, r.text)
+
+
+def test_download_random_and_traversal_tokens_404():
+    assert client.get("/download/abc123XYZ_Proposition?format=stl").status_code == 404
+    # Path traversal can never resolve: tokens are dict keys, not paths.
+    assert client.get("/download/..%2F..%2Fetc%2Fpasswd?format=step").status_code == 404
+    assert client.get("/download/..?format=step").status_code == 404
+
+
+def test_download_missing_file_404(monkeypatch, tmp_path):
+    import os
+
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "ghost",
+            "operation": {"type": "sphere", "radius": 5},
+        }
+    )
+    step_path, stl_path = _write_valid_pair(tmp_path, stem="ghost_tmp")
+
+    def fake_export(operation, name="part", out_dir=None):
+        return {
+            "operation": "sphere",
+            "step_path": step_path,
+            "stl_path": stl_path,
+        }
+
+    monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
+    monkeypatch.setattr("app.services.generation.cadquery_engine.export_operation", fake_export)
+    url = client.post("/generate", json={"prompt": "ghost"}).json()["files"][
+        "stl"
+    ]["download_url"]
+    os.remove(tmp_path / "ghost.stl")  # ephemeral disk lost the renamed file
+    assert client.get(url).status_code == 404
+
+
+def test_export_validation_failure_is_500(monkeypatch, tmp_path):
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "corrupt",
+            "operation": {"type": "sphere", "radius": 5},
+        }
+    )
+    bad_step = tmp_path / "bad.step"
+    bad_stl = tmp_path / "bad.stl"
+    bad_step.write_bytes(b"not a step file at all")
+    bad_stl.write_bytes(b"\x00\x01")
+
+    def fake_export(operation, name="part", out_dir=None):
+        return {
+            "operation": "sphere",
+            "step_path": str(bad_step),
+            "stl_path": str(bad_stl),
+        }
+
+    monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
+    monkeypatch.setattr("app.services.generation.cadquery_engine.export_operation", fake_export)
+    r = client.post("/generate", json={"prompt": "corrupt"})
+    assert r.status_code == 500, r.text
+    assert "validation failed" in r.json()["detail"]
+    assert "Traceback" not in r.text
+
+
+def test_request_ids_unique_per_request(monkeypatch, tmp_path):
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "cube",
+            "operation": {"type": "box", "width": 10, "depth": 10, "height": 10},
+        }
+    )
+    step_path, stl_path = _write_valid_pair(tmp_path, stem="rid_tmp")
+
+    def fake_export(*, width, depth, height):
+        # Re-materialize: the service renames exports to the public stem.
+        _write_valid_pair(tmp_path, stem="rid_tmp")
+        return {"step_path": step_path, "stl_path": stl_path}
+
+    monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
+    monkeypatch.setattr("app.services.generation.cadquery_engine.export_box", fake_export)
+    first = client.post("/generate", json={"prompt": "one"}).json()["request_id"]
+    second = client.post("/generate", json={"prompt": "two"}).json()["request_id"]
+    assert first and second and first != second

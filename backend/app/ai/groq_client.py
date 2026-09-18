@@ -46,6 +46,11 @@ Rules you MUST follow:
 - Every dimension must be > 0 and <= 10000.
 - Keep nesting shallow: at most 4 levels of union/cut, at most 15 operations total.
 - If a dimension is missing, use a sensible explicit value; never omit required fields.
+- "name": a short snake_case machine-safe name describing THIS object
+  (lowercase letters, digits and underscores only, max 60 chars), e.g.
+  "cylinder_shaft", "sphere", "cone", "shaft_with_hole",
+  "box_with_cylindrical_cut". NEVER reuse "rectangular_block" unless the
+  object actually is a rectangular block.
 
 Shapes (all dimensions in mm):
 - box: {"type": "box", "width": 100, "depth": 60, "height": 30}
