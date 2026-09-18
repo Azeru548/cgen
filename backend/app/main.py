@@ -1,11 +1,16 @@
 """Milestone 1 PoC: FastAPI + CadQuery on Render Free.
+Milestone 2: + POST /generate (Groq prompt -> validated CADSpec -> box export).
 
-Endpoints:
+Endpoints (Milestone 1, unchanged):
   GET /health    -> liveness, reports whether CadQuery imports OK
   GET /test/cad  -> create 100x60x30mm box, export STEP+STL, return metadata
   GET /test/cad/download?format=step|stl -> generate box and return the file
 
-No AI, no auth, no DB. Only proves: FastAPI -> CadQuery -> export -> download.
+Milestone 2:
+  POST /generate -> natural-language prompt -> Groq -> CADSpec -> box export
+
+No auth, no DB. Only proves: FastAPI -> CadQuery -> export -> download,
+plus prompt -> Groq -> validated spec -> same box exporter.
 """
 
 from __future__ import annotations
@@ -15,8 +20,28 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
-app = FastAPI(title="cgen PoC — FastAPI + CadQuery", version="0.1.0")
+from .ai import groq_client
+from .cad import cadquery_engine
+
+app = FastAPI(title="cgen PoC — FastAPI + CadQuery", version="0.2.0")
+
+# Prompt guardrails: empty prompts are user errors (400); very long prompts
+# are rejected before spending an AI call on them.
+MAX_PROMPT_LENGTH = 2000
+
+
+class GenerateRequest(BaseModel):
+    prompt: str
+
+
+class GenerateResponse(BaseModel):
+    status: str
+    specification: dict
+    units: str
+    files: dict
+    download: dict
 
 
 @app.get("/health")
@@ -149,3 +174,54 @@ def test_cad_download(
         raise HTTPException(status_code=500, detail=f"{format.upper()} export failed: {e}")
 
     return FileResponse(str(path), media_type=media_type, filename=path.name)
+
+
+@app.post("/generate", response_model=GenerateResponse)
+def generate(body: GenerateRequest):
+    """Milestone 2: prompt -> Groq -> CADSpec validation -> box export.
+
+    Reuses the Milestone 1 CadQuery box exporter; this endpoint adds only
+    the language -> specification layers in front of it.
+    """
+    prompt = (body.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt must not be empty.")
+    if len(body.prompt) > MAX_PROMPT_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"prompt is too long (max {MAX_PROMPT_LENGTH} characters).",
+        )
+
+    try:
+        spec = groq_client.parse_prompt_to_spec(prompt)
+    except groq_client.GroqConfigError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except groq_client.AIGenerationError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except groq_client.SpecValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    op = spec.operation
+    try:
+        result = cadquery_engine.export_box(
+            width=op.width, depth=op.depth, height=op.height
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    dims = f"width={op.width}&depth={op.depth}&height={op.height}"
+    return {
+        "status": "completed",
+        "specification": spec.model_dump(),
+        "units": spec.units,
+        "files": {
+            "step_bytes": result["step_bytes"],
+            "stl_bytes": result["stl_bytes"],
+        },
+        "download": {
+            "step": f"/test/cad/download?format=step&{dims}",
+            "stl": f"/test/cad/download?format=stl&{dims}",
+        },
+    }

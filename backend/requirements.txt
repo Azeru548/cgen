@@ -3,5 +3,6 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 cadquery==2.8.0
+groq==1.7.0
 pytest==8.3.4
 httpx==0.28.1

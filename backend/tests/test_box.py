@@ -1,5 +1,6 @@
 """PoC tests: box creation, validation, STEP/STL export (Milestone 1)."""
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -18,6 +19,9 @@ def test_health():
 
 
 def test_box_step_stl():
+    # Needs real CadQuery (cloud/Docker only); skipped locally where the
+    # heavy OCP wheel is not installed. Still runs on Render.
+    pytest.importorskip("cadquery")
     r = client.get("/test/cad?width=100&depth=60&height=30")
     assert r.status_code == 200, r.text
     body = r.json()

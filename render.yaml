@@ -12,3 +12,7 @@ services:
     envVars:
       - key: PORT
         value: 10000
+      # Milestone 2: Groq API key. sync:false keeps the secret out of git;
+      # set the value in the Render Dashboard (service -> Environment).
+      - key: GROQ_API_KEY
+        sync: false
