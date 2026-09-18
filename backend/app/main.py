@@ -19,12 +19,14 @@ No auth, no DB. Ephemeral disk only.
 from __future__ import annotations
 
 import logging
+import os
 import tempfile
 import uuid
 from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -35,6 +37,27 @@ from .services.generation import InvalidPromptError, run_generation
 logger = logging.getLogger("cgen.api")
 
 app = FastAPI(title="cgen PoC — FastAPI + CadQuery", version="0.4.0")
+
+
+def _cors_origins() -> list[str]:
+    """Allowed browser origins, comma-separated in CORS_ORIGINS.
+
+    Default covers local Next.js dev. Production frontend origin(s) must be
+    set via the CORS_ORIGINS env var (runtime setting — no rebuild needed).
+    Wildcards are never used: the browser sends credentials nowhere here,
+    but an explicit allowlist keeps the API surface intentional.
+    """
+    raw = os.environ.get("CORS_ORIGINS", "http://localhost:3000")
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+    max_age=600,
+)
 
 # Re-exported for backwards compatibility (tests import it from here).
 from .services.generation import MAX_PROMPT_LENGTH  # noqa: E402

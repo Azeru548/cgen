@@ -130,3 +130,43 @@ in the Render Dashboard (service → Environment); optional `GROQ_MODEL` overrid
 (default `openai/gpt-oss-120b`).
 
 Costs remain $0: Render Free + Groq free tier + GitHub free.
+
+## M5 — Frontend (Next.js + TypeScript + Three.js)
+
+```text
+frontend/
+├── app/                  # workspace page + vanilla CSS
+├── components/
+│   ├── cad/CadViewport.tsx  # R3F canvas: orbit/zoom/pan, auto-framing, grid
+│   ├── cad/StlModel.tsx     # STL fetch → parse → center → dispose
+│   ├── GeneratePanel.tsx    # prompt input (2000 max) + states
+│   ├── SpecPanel.tsx        # name, units, operation, dims, op tree
+│   └── Downloads.tsx        # STEP/STL anchors (backend URLs, resolved)
+├── lib/
+│   ├── api.ts            # API_BASE_URL, generatePart, guards, error mapping
+│   └── spec.ts           # display labels derived from the validated spec
+├── types/api.ts          # strict M4 response types (no `any`)
+└── tests/                # vitest: api client, spec helpers, downloads
+```
+
+Flow: prompt → `POST /generate` → STL `download_url` → fetch → `STLLoader`
+→ `BufferGeometry` → render. STEP is never parsed in the browser; it remains
+the authoritative CAD download. No Tailwind, no component library, no
+`GROQ_API_KEY` anywhere in frontend code.
+
+```powershell
+cd frontend
+npm install
+npm test            # vitest
+npm run build       # production build (typecheck + lint)
+npm run dev         # local dev (uses NEXT_PUBLIC_API_BASE_URL)
+```
+
+Env: `NEXT_PUBLIC_API_BASE_URL` (see `.env.example`). Unset, the client falls
+back to `http://localhost:3000` — set it explicitly to the backend origin.
+
+Deploy (Vercel): import the repo, set **Root Directory = `frontend`**, set
+`NEXT_PUBLIC_API_BASE_URL=https://cgen-poc.onrender.com`. Then add the Vercel
+origin to the backend's `CORS_ORIGINS` env var on Render (comma-separated,
+runtime setting — no rebuild needed), e.g.
+`CORS_ORIGINS=http://localhost:3000,https://cgen.vercel.app`.
