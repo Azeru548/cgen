@@ -104,6 +104,31 @@ describe("generatePart", () => {
       ApiError,
     );
   });
+
+  it("accepts M6 operation types at the contract boundary", () => {
+    for (const type of ["torus", "polygon_prism", "intersect", "part"]) {
+      expect(() =>
+        parseGenerateResponse({
+          ...SHAFT_RESPONSE,
+          specification: {
+            ...SHAFT_RESPONSE.specification,
+            operation: { type },
+          },
+        }),
+      ).not.toThrow();
+    }
+    for (const type of ["extrude", "revolve", "loft"]) {
+      expect(() =>
+        parseGenerateResponse({
+          ...SHAFT_RESPONSE,
+          specification: {
+            ...SHAFT_RESPONSE.specification,
+            operation: { type },
+          },
+        }),
+      ).toThrow(ApiError);
+    }
+  });
 });
 
 describe("resolveFileUrl", () => {

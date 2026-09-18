@@ -3,6 +3,8 @@ Milestone 2: + POST /generate (Groq prompt -> validated CADSpec -> box export).
 Milestone 3: + multi-operation CAD (box/cylinder/cone/sphere/union/cut).
 Milestone 4: + production-grade generation API (clean contract, file store,
   request IDs, timing, structured logging).
+Milestone 6: + schema v3.0 (torus, polygon_prism, intersect, part features:
+  hole/fillet/chamfer/shell) with unchanged API contracts.
 
 Endpoints (Milestone 1, unchanged):
   GET /health    -> liveness, reports whether CadQuery imports OK
@@ -36,7 +38,7 @@ from .services.generation import InvalidPromptError, run_generation
 
 logger = logging.getLogger("cgen.api")
 
-app = FastAPI(title="cgen PoC — FastAPI + CadQuery", version="0.4.0")
+app = FastAPI(title="cgen PoC — FastAPI + CadQuery", version="0.6.0")
 
 
 def _cors_origins() -> list[str]:

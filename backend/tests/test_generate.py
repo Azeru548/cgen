@@ -284,6 +284,136 @@ def test_generate_success_path_mocked(monkeypatch, tmp_path):
     assert body["generation_time_ms"] >= 0
 
 
+def test_generate_part_with_features_mocked(monkeypatch, tmp_path):
+    """M6: a part node (build + features) flows through /generate end to end."""
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "vent_plate",
+            "operation": {
+                "type": "part",
+                "build": {"type": "box", "width": 100, "depth": 60, "height": 10},
+                "features": [
+                    {"type": "hole", "diameter": 8, "through": True},
+                    {"type": "fillet", "radius": 2},
+                ],
+            },
+        }
+    )
+    seen = {}
+    step_path, stl_path = _write_valid_pair(tmp_path, stem="vent_plate_part")
+
+    def fake_export(operation, name="part", out_dir=None):
+        seen["op"] = operation
+        seen["name"] = name
+        return {
+            "operation": "part",
+            "step_bytes": 321,
+            "stl_bytes": 654,
+            "step_path": step_path,
+            "stl_path": stl_path,
+        }
+
+    monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
+    monkeypatch.setattr(
+        "app.services.generation.cadquery_engine.export_operation", fake_export
+    )
+
+    r = client.post(
+        "/generate",
+        json={"prompt": "Create a 100x60x10mm plate with an 8mm through hole and 2mm rounded edges."},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    op = body["specification"]["operation"]
+    assert op["type"] == "part"
+    assert op["build"]["type"] == "box"
+    assert {f["type"] for f in op["features"]} == {"hole", "fillet"}
+    assert seen["op"].build.width == 100
+    assert seen["name"] == "vent_plate"
+    assert body["files"]["step"]["filename"] == "vent_plate.step"
+
+
+def test_generate_m6_new_operations_mocked(monkeypatch, tmp_path):
+    """M6 primitives/composition wire through the generic export path."""
+    cases = [
+        (
+            "o_ring",
+            {"type": "torus", "major_radius": 30, "minor_radius": 8},
+            "Create a ring with a 60mm outer diameter and 16mm tube diameter.",
+        ),
+        (
+            "hex_boss",
+            {"type": "polygon_prism", "sides": 6, "circumradius": 10, "height": 8},
+            "Create a 20mm across-corners hexagonal boss 8mm tall.",
+        ),
+        (
+            "lens",
+            {
+                "type": "intersect",
+                "base": {"type": "box", "width": 50, "depth": 50, "height": 10},
+                "tool": {"type": "sphere", "radius": 60},
+            },
+            "Intersect a 50mm cube with a large sphere to make a rounded plate.",
+        ),
+    ]
+    for name, operation, prompt in cases:
+        spec = CADSpec.model_validate(
+            {
+                "document_type": "3d_part",
+                "units": "mm",
+                "name": name,
+                "operation": operation,
+            }
+        )
+        step_path, stl_path = _write_valid_pair(tmp_path, stem=f"{name}_files")
+
+        def fake_export(operation, name="part", out_dir=None, _p=(step_path, stl_path)):
+            return {
+                "operation": operation.type,
+                "step_bytes": 10,
+                "stl_bytes": 20,
+                "step_path": _p[0],
+                "stl_path": _p[1],
+            }
+
+        monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt, s=spec: s)
+        monkeypatch.setattr(
+            "app.services.generation.cadquery_engine.export_operation", fake_export
+        )
+        r = client.post("/generate", json={"prompt": prompt})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["specification"]["operation"] == operation
+
+
+def test_generate_invalid_m6_spec_is_422(monkeypatch):
+    """A spec the schema rejects (e.g. minor >= major torus) maps to 422."""
+    from app.ai.groq_client import SpecValidationError
+    from pydantic import ValidationError as PydanticValidationError
+
+    def fake_parse(prompt):
+        try:
+            CADSpec.model_validate(
+                {
+                    "document_type": "3d_part",
+                    "units": "mm",
+                    "name": "bad_ring",
+                    "operation": {"type": "torus", "major_radius": 8, "minor_radius": 8},
+                }
+            )
+        except PydanticValidationError as e:
+            raise SpecValidationError(
+                f"AI specification failed validation: {e.errors()[0]['msg']}"
+            ) from e
+
+    monkeypatch.setattr(groq_client, "parse_prompt_to_spec", fake_parse)
+    r = client.post("/generate", json={"prompt": "Create a degenerate ring."})
+    assert r.status_code == 422, r.text
+    assert "validation" in r.json()["detail"].lower()
+
+
 def test_generate_cad_failure_is_server_error(monkeypatch):
     monkeypatch.setattr(
         groq_client,

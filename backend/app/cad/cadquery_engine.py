@@ -1,18 +1,36 @@
-"""Deterministic CadQuery engine (Milestone 3).
+"""Deterministic CadQuery engine (Milestone 3, extended in Milestone 6).
 
 The engine receives already-validated Pydantic data (cad/schema.py) and
 builds geometry from it. It NEVER receives or executes raw AI output:
 no exec(), no eval().
 
 Geometry conventions (all units millimeters, origin at world 0,0,0):
-  box      : width (X) x depth (Y) x height (Z), centered on the origin.
-  cylinder : circular cross-section of `radius` in the XY plane, axis along Z,
-             spanning z in [-height/2, +height/2] (centered on the origin).
-  cone     : frustum along Z, `bottom_radius` at z=-height/2,
-             `top_radius` at z=+height/2 (equal radii = straight cylinder).
-  sphere   : `radius` about the origin.
-  union    : result = base + tool (boolean fuse).
-  cut      : result = base - tool (boolean subtraction).
+  box           : width (X) x depth (Y) x height (Z), centered on the origin.
+  cylinder      : circular cross-section of `radius` in the XY plane, axis
+                  along Z, spanning z in [-height/2, +height/2] (centered).
+  cone          : frustum along Z, `bottom_radius` at z=-height/2,
+                  `top_radius` at z=+height/2 (equal radii = straight cylinder).
+  sphere        : `radius` about the origin.
+  torus         : ring torus, axis +Z, centered on the origin.
+  polygon_prism : regular n-gon prism, axis +Z, centered on the origin.
+  union         : result = base + tool (boolean fuse).
+  cut           : result = base - tool (boolean subtraction).
+  intersect     : result = base ∩ tool (empty result is rejected).
+  part          : build solid, then apply engineering features (below).
+
+Engineering features (Milestone 6) are STRUCTURAL, not spatial: they carry
+no offsets or rotation. The engine applies them in a fixed order regardless
+of the order they appear in the spec (the order is the one OCCT handles
+robustly — see _apply_features):
+
+  1. holes    — drilled along +Z, centered on the solid's bounding box;
+                through holes extend through the bbox (same deterministic
+                rule as the legacy through-cylinder cut); concentric holes
+                are applied largest-first (counterbore pattern); blind
+                holes drill from the top (+Z) face down `depth`.
+  2. shell    — hollow the solid with a uniform wall, top (+Z) face open.
+  3. chamfer  — all convex bbox-boundary edges parallel to X or Y, 45° bevel.
+  4. fillet   — same deterministic edge set as chamfer, rounded.
 
 Through holes: when a cylinder with through=True is the `tool` of a `cut`,
 the engine ignores the tool's nominal height and instead rebuilds it to span
@@ -28,10 +46,18 @@ from pathlib import Path
 
 from .schema import (
     BoxOperation,
+    ChamferFeature,
     ConeOperation,
     CutOperation,
     CylinderOperation,
+    FilletFeature,
+    HoleFeature,
+    IntersectOperation,
+    PartOperation,
+    PolygonPrismOperation,
+    ShellFeature,
     SphereOperation,
+    TorusOperation,
     UnionOperation,
 )
 
@@ -40,6 +66,10 @@ from .schema import (
 # relative term keeps it sane for very large parts.
 THROUGH_MARGIN_MM = 2.0
 THROUGH_MARGIN_RATIO = 0.001
+
+# Extra cutter length past a blind hole's floor so the flat tool tip cuts
+# cleanly (deterministic, not AI-supplied).
+HOLE_OVERSHOOT_MM = 0.5
 
 
 def get_cadquery_version() -> str | None:
@@ -102,12 +132,70 @@ def make_sphere(radius: float):
     )
 
 
+def make_torus(major_radius: float, minor_radius: float):
+    """Full ring torus, axis +Z, centered on the origin.
+
+    major_radius reaches the tube center; minor_radius is the tube radius.
+    CadQuery's makeTorus(radius1, radius2) with default angles is a full
+    torus (no planar cut surfaces).
+    """
+    cq = _require_cq()
+    if min(major_radius, minor_radius) <= 0:
+        raise ValueError("Torus radii must be positive")
+    if minor_radius >= major_radius:
+        raise ValueError(
+            "Torus minor_radius must be smaller than major_radius (ring torus)"
+        )
+    return cq.Solid.makeTorus(major_radius, minor_radius)
+
+
+def make_polygon_prism(sides: int, circumradius: float, height: float):
+    """Regular n-gon prism: circumradius = center-to-vertex, axis +Z, centered.
+
+    Workplane.polygon() inscribes the n-gon in a circle of the given DIAMETER,
+    so the circumradius is passed as diameter/2. The profile starts at z=0,
+    so the solid is translated down by height/2 to match the centered
+    convention used by every other primitive. First vertex sits on the +X
+    axis (deterministic phase).
+    """
+    cq = _require_cq()
+    if sides < 3:
+        raise ValueError("Polygon prism needs at least 3 sides")
+    if min(circumradius, height) <= 0:
+        raise ValueError("Polygon prism dimensions must be positive")
+    solid = cq.Workplane("XY").polygon(sides, 2 * circumradius).extrude(height).val()
+    return solid.translate(cq.Vector(0, 0, -height / 2))
+
+
 def union(base, tool):
     """Boolean union: result = base + tool. Inputs are CadQuery shapes."""
     try:
         return base.fuse(tool)
     except Exception as e:
         raise RuntimeError(f"Boolean union failed: {e}") from e
+
+
+def intersect(base, tool):
+    """Boolean intersection: result = base ∩ tool.
+
+    A disjoint base/tool pair produces an empty solid; that is a realistic
+    outcome of an AI-described request, so it is rejected with ValueError
+    (mapped to HTTP 422) instead of silently exporting nothing.
+    """
+    try:
+        result = base.intersect(tool)
+    except Exception as e:
+        raise RuntimeError(f"Boolean intersection failed: {e}") from e
+    try:
+        volume = result.Volume()
+    except Exception:
+        volume = 0.0
+    if volume <= 0:
+        raise ValueError(
+            "intersect produced an empty solid — base and tool do not "
+            "overlap. Rephrase the request."
+        )
+    return result
 
 
 def cut(base, tool):
@@ -138,6 +226,152 @@ def _build_through_tool(cq, base, radius: float):
     return tool.translate(cq.Vector(cx, cy, cz - height / 2))
 
 
+# --- Engineering features (Milestone 6) ---------------------------------------
+
+
+def _cut_hole(solid, feature: HoleFeature):
+    """Cut one hole along +Z, centered on the solid's bounding box.
+
+    Through holes reuse the through-tool rule (full bbox extent + margin).
+    Blind holes drill from the top (+Z) face down `depth`, with a small
+    deterministic overshoot so the flat tip cuts cleanly.
+    """
+    cq = _require_cq()
+    radius = feature.diameter / 2
+    if feature.through:
+        tool = _build_through_tool(cq, solid, radius)
+        return cut(solid, tool)
+    assert feature.depth is not None  # guaranteed by the schema
+    bbox = solid.BoundingBox()
+    height = feature.depth + HOLE_OVERSHOOT_MM
+    tool = cq.Solid.makeCylinder(radius, height)
+    cz = bbox.zmax - feature.depth  # top of the cutter, above the hole floor
+    return cut(solid, tool.translate(cq.Vector((bbox.xmin + bbox.xmax) / 2, (bbox.ymin + bbox.ymax) / 2, cz)))
+
+
+def _is_axis_aligned_to_xy(edge, tol: float = 1e-6) -> bool:
+    """True when a straight edge runs parallel to the X or Y axis."""
+    vertices = edge.Vertices()
+    if len(vertices) < 2:
+        return False
+    p0, p1 = vertices[0], vertices[1]
+    dx = abs(p1.X - p0.X)
+    dy = abs(p1.Y - p0.Y)
+    dz = abs(p1.Z - p0.Z)
+    x_aligned = dx > tol and dy < tol and dz < tol
+    y_aligned = dy > tol and dx < tol and dz < tol
+    return x_aligned or y_aligned
+
+
+def _on_bbox_boundary_xy(edge, bbox, tol: float = 1e-6) -> bool:
+    """True when every vertex lies within the bbox boundary in X AND Y
+    (i.e. x ∈ {xmin, xmax} and y ∈ {ymin, ymax})."""
+    for v in edge.Vertices():
+        near_x = abs(v.X - bbox.xmin) <= tol or abs(v.X - bbox.xmax) <= tol
+        near_y = abs(v.Y - bbox.ymin) <= tol or abs(v.Y - bbox.ymax) <= tol
+        if not (near_x and near_y):
+            return False
+    return True
+
+
+def _select_feature_edges(solid, cq):
+    """Deterministic edge set for fillet/chamfer: straight edges parallel to
+    X or Y that lie on the bounding-box boundary in the XY plane.
+
+    This rounds/prisms the vertical corner edges and the top/bottom rim of
+    prismatic solids (boxes, L-shapes) while never touching curved edges
+    (circles, seams) — so cylinders, spheres, tori and drilled hole rims are
+    always left intact.
+    """
+    bbox = solid.BoundingBox()
+    selected = []
+    for edge in solid.Edges():
+        if _is_axis_aligned_to_xy(edge) and _on_bbox_boundary_xy(edge, bbox):
+            selected.append(edge)
+    return selected
+
+
+def _apply_fillet(solid, radius: float):
+    cq = _require_cq()
+    edges = _select_feature_edges(solid, cq)
+    if not edges:
+        raise ValueError("fillet found no applicable straight boundary edges")
+    try:
+        return solid.fillet(radius, edges)
+    except Exception as e:
+        raise RuntimeError(
+            "fillet failed — try a smaller radius or simpler geometry"
+        ) from e
+
+
+def _apply_chamfer(solid, size: float):
+    cq = _require_cq()
+    edges = _select_feature_edges(solid, cq)
+    if not edges:
+        raise ValueError("chamfer found no applicable straight boundary edges")
+    try:
+        # CadQuery 2.8: chamfer(length, length2, edgeList) — length2 is a
+        # required positional in this release; None gives a symmetric
+        # 45° chamfer of `size`.
+        return solid.chamfer(size, None, edges)
+    except Exception as e:
+        raise RuntimeError(
+            "chamfer failed — try a smaller size or simpler geometry"
+        ) from e
+
+
+def _apply_shell(solid, thickness: float):
+    """Hollow the solid: uniform wall, top (+Z) face removed.
+
+    OCCT silently returns the input unchanged when the thickness is too
+    large for the solid (e.g. thicker than the smallest dimension), so the
+    result is volume-checked: a real shell always removes material.
+    """
+    cq = _require_cq()
+    try:
+        wp = cq.Workplane("XY").newObject([solid])
+        result = wp.faces(">Z").shell(-thickness)
+        volume = result.val().Volume()
+        if volume >= solid.Volume() * (1 - 1e-6):
+            raise RuntimeError("no material removed")
+        if not result.val().isValid():
+            raise RuntimeError("resulting solid is invalid")
+        return result.val()
+    except Exception as e:
+        raise RuntimeError(
+            "shell failed — thickness may exceed the smallest wall spacing"
+        ) from e
+
+
+def _apply_features(solid, features: list):
+    """Apply features in engine-fixed order: holes -> shell -> chamfer -> fillet.
+
+    The order is NOT the spec's list order — it is the order OCCT handles
+    robustly (verified empirically in M6):
+      - holes first, while the solid is still full (through tools span the
+        true bbox); concentric holes apply largest-first (counterbore);
+      - shell before edge features (filleting or chamfering first makes the
+        subsequent inner offset fail or produce invalid solids whenever the
+        radius/size reaches the wall thickness);
+      - chamfer before fillet (fillet leaves tangent edges that break the
+        subsequent chamfer on the same solid).
+    Feature list order in the spec is irrelevant; results are deterministic.
+    """
+    holes = [f for f in features if isinstance(f, HoleFeature)]
+    for feature in sorted(holes, key=lambda h: h.diameter, reverse=True):
+        solid = _cut_hole(solid, feature)
+    for feature in features:
+        if isinstance(feature, ShellFeature):
+            solid = _apply_shell(solid, feature.thickness)
+    for feature in features:
+        if isinstance(feature, ChamferFeature):
+            solid = _apply_chamfer(solid, feature.size)
+    for feature in features:
+        if isinstance(feature, FilletFeature):
+            solid = _apply_fillet(solid, feature.radius)
+    return solid
+
+
 def build_operation(op):
     """Build a CadQuery shape from a validated operation node (recursive)."""
     cq = _require_cq()
@@ -153,6 +387,10 @@ def build_operation(op):
         return make_cone(op.bottom_radius, op.top_radius, op.height)
     if isinstance(op, SphereOperation):
         return make_sphere(op.radius)
+    if isinstance(op, TorusOperation):
+        return make_torus(op.major_radius, op.minor_radius)
+    if isinstance(op, PolygonPrismOperation):
+        return make_polygon_prism(op.sides, op.circumradius, op.height)
     if isinstance(op, UnionOperation):
         return union(build_operation(op.base), build_operation(op.tool))
     if isinstance(op, CutOperation):
@@ -165,6 +403,11 @@ def build_operation(op):
         else:
             tool = build_operation(tool_op)
         return cut(base, tool)
+    if isinstance(op, IntersectOperation):
+        return intersect(build_operation(op.base), build_operation(op.tool))
+    if isinstance(op, PartOperation):
+        solid = build_operation(op.build)
+        return _apply_features(solid, op.features)
     raise ValueError(f"Unsupported operation: {type(op).__name__}")
 
 

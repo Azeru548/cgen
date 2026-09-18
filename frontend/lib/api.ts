@@ -33,8 +33,12 @@ function isValidOperationType(value: unknown): boolean {
     value === "cylinder" ||
     value === "cone" ||
     value === "sphere" ||
+    value === "torus" ||
+    value === "polygon_prism" ||
     value === "union" ||
-    value === "cut"
+    value === "cut" ||
+    value === "intersect" ||
+    value === "part"
   );
 }
 

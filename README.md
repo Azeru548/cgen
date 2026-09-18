@@ -13,21 +13,38 @@ User prompt
 
 Live: `https://cgen-poc.onrender.com` · Docs: `GET /docs` (OpenAPI)
 
-## Supported operations (schema v2.0)
+## Supported operations (schema v3.0)
 
 ```text
-box       {width, depth, height}
-cylinder  {radius, height, through?}
-cone      {bottom_radius, top_radius, height}
-sphere    {radius}
-union     {base, tool}   result = base + tool
-cut       {base, tool}   result = base - tool
+box           {width, depth, height}
+cylinder      {radius, height, through?}
+cone          {bottom_radius, top_radius, height}
+sphere        {radius}
+torus         {major_radius, minor_radius}          minor < major
+polygon_prism {sides (3-12), circumradius, height}
+union         {base, tool}   result = base + tool
+cut           {base, tool}   result = base - tool
+intersect     {base, tool}   result = base ∩ tool (must overlap)
+part          {build, features[]}                  M6 engineering features
+```
+
+`part` wraps a built solid with deterministic features (max 4, applied by the
+engine in its own fixed order — holes → shell → chamfer → fillet — regardless
+of list order):
+
+```text
+hole    {diameter, through} or {diameter, depth}   centered on the part
+fillet  {radius}        all straight bbox-boundary edges (X/Y directions)
+chamfer {size}          same edge set as fillet, 45° bevel
+shell   {thickness}     hollow, top face open
 ```
 
 All dimensions are millimeters (the model normalizes m/cm/inch → mm and
 diameters → radii). Operation trees are capped (depth ≤ 4, nodes ≤ 15).
-A `cut` whose tool is a cylinder with `"through": true` gets a deterministic
-centered through-hole — the model never computes offsets.
+A `cut` whose tool is a cylinder with `"through": true` keeps its M3 behavior:
+a deterministic centered through-hole — the model never computes offsets.
+Engineering features are structural (no offsets, no rotation); placement-aware
+geometry is a deliberate future milestone, not part of M6.
 
 The backend generates **actual CAD files**, verified to open in Autodesk
 (STEP with through-hole) and standard STL viewers.
@@ -130,6 +147,19 @@ in the Render Dashboard (service → Environment); optional `GROQ_MODEL` overrid
 (default `openai/gpt-oss-120b`).
 
 Costs remain $0: Render Free + Groq free tier + GitHub free.
+
+## M6 — Engineering feature expansion
+
+Backend: torus, polygon prism, intersect, and the `part` node (holes,
+fillets, chamfers, shells) — all validated by schema v3.0 and built by the
+deterministic engine. The Groq system prompt handles engineering expressions
+(M-size holes, diameter vs radius, inch plates) while staying JSON-only.
+The engine applies features in the OCCT-robust order and guards failure
+modes that OCCT handles silently (empty intersections, no-op shells,
+fillet-on-hollowed-solid invalidity) with clean 422/500 errors.
+
+Frontend: spec display for every new operation and feature, feature rows in
+engine order, intersect (∩) trees. No component or styling changes.
 
 ## M5 — Frontend (Next.js + TypeScript + Three.js)
 

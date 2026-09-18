@@ -16,7 +16,10 @@ export function SpecPanel({ result }: SpecPanelProps) {
   const spec = result.specification;
   const op = spec.operation;
   const dimensions = summarizeDimensions(op);
-  const tree = op.type === "union" || op.type === "cut" ? describeTree(op) : null;
+  const tree =
+    op.type === "union" || op.type === "cut" || op.type === "intersect"
+      ? describeTree(op)
+      : null;
 
   return (
     <section className="panel" aria-labelledby="spec-heading" data-testid="spec-panel">

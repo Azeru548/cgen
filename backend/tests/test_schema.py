@@ -7,6 +7,7 @@ from app.cad import schema
 from app.cad.schema import (
     CADSpec,
     MAX_DIMENSION_MM,
+    feature_summary,
     operation_depth,
     operation_node_count,
 )
@@ -166,7 +167,7 @@ def test_valid_cut_shaft_with_hole():
 
 def test_invalid_operation_rejected():
     with pytest.raises(ValidationError):
-        CADSpec.model_validate(valid_payload(operation={"type": "torus", "radius": 10}))
+        CADSpec.model_validate(valid_payload(operation={"type": "extrude", "height": 10}))
     with pytest.raises(ValidationError):
         CADSpec.model_validate(valid_payload(operation={"type": "cylinder"}))
 
@@ -281,3 +282,372 @@ def test_depth_and_node_helpers():
     )
     assert operation_depth(spec.operation) == 3
     assert operation_node_count(spec.operation) == 5
+
+
+# --- Milestone 6 primitives: torus, polygon_prism ---------------------------
+
+
+def test_valid_torus():
+    spec = CADSpec.model_validate(
+        valid_payload(
+            name="o_ring",
+            operation={"type": "torus", "major_radius": 30, "minor_radius": 8},
+        )
+    )
+    assert spec.operation.type == "torus"
+    assert spec.operation.major_radius == 30
+    assert spec.operation.minor_radius == 8
+
+
+def test_valid_torus_inside_composition():
+    spec = CADSpec.model_validate(
+        valid_payload(
+            name="ring_union",
+            operation={
+                "type": "union",
+                "base": {"type": "torus", "major_radius": 30, "minor_radius": 8},
+                "tool": box_op(),
+            },
+        )
+    )
+    assert spec.operation.base.type == "torus"
+
+
+def test_torus_minor_ge_major_rejected():
+    for minor in (30, 31):
+        with pytest.raises(ValidationError):
+            CADSpec.model_validate(
+                valid_payload(
+                    operation={"type": "torus", "major_radius": 30, "minor_radius": minor}
+                )
+            )
+
+
+def test_torus_bounds_enforced():
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            valid_payload(
+                operation={"type": "torus", "major_radius": 0, "minor_radius": 5}
+            )
+        )
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            valid_payload(
+                operation={
+                    "type": "torus",
+                    "major_radius": MAX_DIMENSION_MM + 1,
+                    "minor_radius": 5,
+                }
+            )
+        )
+
+
+def test_valid_polygon_prism():
+    spec = CADSpec.model_validate(
+        valid_payload(
+            name="hex_boss",
+            operation={"type": "polygon_prism", "sides": 6, "circumradius": 10, "height": 8},
+        )
+    )
+    assert spec.operation.type == "polygon_prism"
+    assert spec.operation.sides == 6
+    assert spec.operation.circumradius == 10
+
+
+def test_polygon_prism_sides_bounds():
+    for bad_sides in (2, 13):
+        with pytest.raises(ValidationError):
+            CADSpec.model_validate(
+                valid_payload(
+                    operation={
+                        "type": "polygon_prism",
+                        "sides": bad_sides,
+                        "circumradius": 10,
+                        "height": 8,
+                    }
+                )
+            )
+
+
+def test_polygon_prism_sides_must_be_integer_like():
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            valid_payload(
+                operation={
+                    "type": "polygon_prism",
+                    "sides": 6.5,
+                    "circumradius": 10,
+                    "height": 8,
+                }
+            )
+        )
+
+
+def test_polygon_prism_dimension_bounds():
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            valid_payload(
+                operation={
+                    "type": "polygon_prism",
+                    "sides": 6,
+                    "circumradius": 0,
+                    "height": 8,
+                }
+            )
+        )
+
+
+# --- Milestone 6 composition: intersect --------------------------------------
+
+
+def test_valid_intersect():
+    spec = CADSpec.model_validate(
+        valid_payload(
+            name="lens",
+            operation={
+                "type": "intersect",
+                "base": box_op(),
+                "tool": {"type": "sphere", "radius": 60},
+            },
+        )
+    )
+    assert spec.operation.type == "intersect"
+    assert spec.operation.base.type == "box"
+    assert spec.operation.tool.type == "sphere"
+
+
+def test_intersect_nested_in_booleans():
+    spec = CADSpec.model_validate(
+        valid_payload(
+            name="composed",
+            operation={
+                "type": "cut",
+                "base": {
+                    "type": "intersect",
+                    "base": box_op(),
+                    "tool": {"type": "sphere", "radius": 60},
+                },
+                "tool": {"type": "cylinder", "radius": 5, "height": 40, "through": True},
+            },
+        )
+    )
+    assert spec.operation.base.type == "intersect"
+    assert operation_depth(spec.operation) == 3
+
+
+def test_intersect_missing_tool_rejected():
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            valid_payload(operation={"type": "intersect", "base": box_op()})
+        )
+
+
+# --- Milestone 6 feature node: part ------------------------------------------
+
+
+def plate_payload(features):
+    return valid_payload(
+        name="plate",
+        operation={
+            "type": "part",
+            "build": {"type": "box", "width": 100, "depth": 60, "height": 10},
+            "features": features,
+        },
+    )
+
+
+def test_valid_part_with_features():
+    spec = CADSpec.model_validate(
+        plate_payload(
+            [
+                {"type": "hole", "diameter": 8, "through": True},
+                {"type": "fillet", "radius": 3},
+                {"type": "chamfer", "size": 2},
+                {"type": "shell", "thickness": 2},
+            ]
+        )
+    )
+    assert spec.operation.type == "part"
+    assert spec.operation.build.type == "box"
+    assert len(spec.operation.features) == 4
+
+
+def test_part_without_features_is_valid():
+    spec = CADSpec.model_validate(plate_payload([]))
+    assert spec.operation.features == []
+
+
+def test_part_features_order_is_normalized_for_display():
+    # Engine applies holes -> shell -> chamfer -> fillet regardless of list order.
+    spec = CADSpec.model_validate(
+        plate_payload(
+            [
+                {"type": "chamfer", "size": 2},
+                {"type": "hole", "diameter": 8, "through": True},
+                {"type": "fillet", "radius": 3},
+            ]
+        )
+    )
+    assert feature_summary(spec.operation) == ["hole", "chamfer", "fillet"]
+
+
+def test_part_allows_multiple_holes_up_to_cap():
+    features = [
+        {"type": "hole", "diameter": 6, "through": True},
+        {"type": "hole", "diameter": 3, "depth": 8},
+        {"type": "fillet", "radius": 2},
+        {"type": "chamfer", "size": 2},
+    ]
+    spec = CADSpec.model_validate(plate_payload(features))
+    assert len(spec.operation.features) == 4
+
+
+def test_part_feature_cap_enforced():
+    features = [
+        {"type": "hole", "diameter": 6, "through": True},
+        {"type": "hole", "diameter": 3, "depth": 8},
+        {"type": "fillet", "radius": 2},
+        {"type": "chamfer", "size": 2},
+    ]
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            plate_payload(features + [{"type": "shell", "thickness": 1}])
+        )
+
+
+def test_part_counts_toward_depth_and_nodes():
+    spec = CADSpec.model_validate(plate_payload([]))
+    assert operation_depth(spec.operation) == 2
+    assert operation_node_count(spec.operation) == 2
+    # part wrapping the reference cut tree: depth 3, nodes 4
+    spec2 = CADSpec.model_validate(
+        valid_payload(
+            name="shaft_part",
+            operation={
+                "type": "part",
+                "build": {
+                    "type": "cut",
+                    "base": {"type": "cylinder", "radius": 15, "height": 120},
+                    "tool": {"type": "cylinder", "radius": 7.5, "height": 120, "through": True},
+                },
+                "features": [{"type": "fillet", "radius": 1}],
+            },
+        )
+    )
+    assert operation_depth(spec2.operation) == 3
+    assert operation_node_count(spec2.operation) == 4
+
+
+def test_part_nesting_rejected_everywhere():
+    inner = {
+        "type": "part",
+        "build": box_op(),
+        "features": [],
+    }
+    # part inside part
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            valid_payload(
+                name="nested_part",
+                operation={"type": "part", "build": inner, "features": []},
+            )
+        )
+    # part inside a boolean
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            valid_payload(
+                name="boolean_part",
+                operation={"type": "union", "base": box_op(), "tool": inner},
+            )
+        )
+
+
+def test_part_extra_and_unknown_fields_rejected():
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            valid_payload(
+                name="bad_part",
+                operation={
+                    "type": "part",
+                    "build": box_op(),
+                    "features": [],
+                    "position": {"x": 1},
+                },
+            )
+        )
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            plate_payload([{"type": "hole", "diameter": 8, "through": True, "offset": 5}])
+        )
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            plate_payload([{"type": "engrave", "text": "hi"}])
+        )
+
+
+# --- Milestone 6 feature validation ------------------------------------------
+
+
+def test_blind_hole_requires_depth():
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            plate_payload([{"type": "hole", "diameter": 8}])
+        )
+
+
+def test_through_hole_rejects_depth():
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            plate_payload([{"type": "hole", "diameter": 8, "through": True, "depth": 20}])
+        )
+
+
+def test_shallow_wide_blind_hole_is_valid_counterbore():
+    # Shallow wide blind holes are legitimate counterbore recesses; combined
+    # with a concentric through hole they form a counterbored hole.
+    spec = CADSpec.model_validate(
+        plate_payload(
+            [
+                {"type": "hole", "diameter": 16, "through": True},
+                {"type": "hole", "diameter": 8, "depth": 4},
+            ]
+        )
+    )
+    assert len(spec.operation.features) == 2
+
+
+def test_blind_hole_depth_recorded():
+    spec = CADSpec.model_validate(
+        plate_payload([{"type": "hole", "diameter": 8, "depth": 20}])
+    )
+    assert spec.operation.features[0].depth == 20
+
+
+def test_feature_sizes_bounded():
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            plate_payload([{"type": "fillet", "radius": 0}])
+        )
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            plate_payload([{"type": "fillet", "radius": MAX_DIMENSION_MM + 1}])
+        )
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            plate_payload([{"type": "chamfer", "size": 0}])
+        )
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            plate_payload([{"type": "shell", "thickness": -1}])
+        )
+
+
+def test_shell_position_in_list_is_irrelevant():
+    # Application order is owned by the engine (holes -> shell -> chamfer ->
+    # fillet); the schema accepts shell anywhere in the feature list.
+    for features in (
+        [{"type": "shell", "thickness": 2}, {"type": "fillet", "radius": 3}],
+        [{"type": "fillet", "radius": 3}, {"type": "shell", "thickness": 2}],
+    ):
+        spec = CADSpec.model_validate(plate_payload(features))
+        assert feature_summary(spec.operation) == ["shell", "fillet"]
