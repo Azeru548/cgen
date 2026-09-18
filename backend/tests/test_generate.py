@@ -34,6 +34,116 @@ def make_fake_client(content, captured=None):
     return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
 
 
+class FakeApiError(Exception):
+    """Duck-typed stand-in for groq SDK status errors.
+
+    Mirrors the attributes the mapping code reads (status_code/body/message)
+    plus sensitive attrs (headers/request) the mapping must NEVER echo.
+    """
+
+    def __init__(self, message, *, status_code=None, body=None):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+        self.body = body
+        self.headers = {"Authorization": "Bearer sk-test-secret-123"}
+        self.request = SimpleNamespace(
+            headers=self.headers, content='{"model": "secret-model"}'
+        )
+
+
+def make_failing_client(exc):
+    def create(**kwargs):
+        raise exc
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+def test_auth_failure_is_actionable_502_without_leaks(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "sk-test-secret-123")
+    exc = FakeApiError(
+        "Error code: 401 - {'error': {'message': 'Invalid API Key'}}",
+        status_code=401,
+        body={"error": {"message": "Invalid API Key", "code": "invalid_api_key"}},
+    )
+    monkeypatch.setattr(groq_client, "_get_client", lambda key: make_failing_client(exc))
+    r = client.post("/generate", json={"prompt": "Create a block."})
+    assert r.status_code == 502, r.text
+    detail = r.json()["detail"]
+    assert "authentication failed" in detail
+    assert "GROQ_API_KEY" in detail
+    assert "sk-test-secret-123" not in r.text
+    assert "Bearer" not in r.text
+    assert "Traceback" not in r.text
+
+
+def test_rate_limit_is_502(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    exc = FakeApiError(
+        "Error code: 429 - {'error': {'message': 'Rate limit reached'}}",
+        status_code=429,
+        body={"error": {"message": "Rate limit reached", "code": "rate_limit_exceeded"}},
+    )
+    monkeypatch.setattr(groq_client, "_get_client", lambda key: make_failing_client(exc))
+    r = client.post("/generate", json={"prompt": "Create a block."})
+    assert r.status_code == 502, r.text
+    assert "rate limit" in r.json()["detail"]
+
+
+def test_retired_model_is_actionable_502(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.delenv("GROQ_MODEL", raising=False)
+    exc = FakeApiError(
+        "Error code: 400 - {'error': {'message': 'The model "
+        "`llama-3.3-70b-versatile` has been decommissioned', "
+        "'code': 'model_decommissioned'}}",
+        status_code=400,
+        body={
+            "error": {
+                "message": "The model `llama-3.3-70b-versatile` has been decommissioned",
+                "code": "model_decommissioned",
+            }
+        },
+    )
+    monkeypatch.setattr(groq_client, "_get_client", lambda key: make_failing_client(exc))
+    # Force the retired model to reproduce the production failure exactly.
+    monkeypatch.setattr(groq_client, "GROQ_MODEL_DEFAULT", "llama-3.3-70b-versatile")
+    r = client.post("/generate", json={"prompt": "Create a block."})
+    assert r.status_code == 502, r.text
+    detail = r.json()["detail"]
+    assert "retired" in detail
+    assert "GROQ_MODEL" in detail
+
+
+def test_connection_failure_is_502(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    exc = FakeApiError("Connection error.", status_code=None, body=None)
+    monkeypatch.setattr(groq_client, "_get_client", lambda key: make_failing_client(exc))
+    r = client.post("/generate", json={"prompt": "Create a block."})
+    assert r.status_code == 502, r.text
+    assert "Could not reach the Groq API" in r.json()["detail"]
+
+
+def test_server_error_is_502(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    exc = FakeApiError("Error code: 503", status_code=503, body=None)
+    monkeypatch.setattr(groq_client, "_get_client", lambda key: make_failing_client(exc))
+    r = client.post("/generate", json={"prompt": "Create a block."})
+    assert r.status_code == 502, r.text
+    assert "server error" in r.json()["detail"]
+
+
+def test_error_detail_is_logged_server_side(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    exc = FakeApiError("Error code: 401", status_code=401, body=None)
+    monkeypatch.setattr(groq_client, "_get_client", lambda key: make_failing_client(exc))
+    with caplog.at_level(logging.WARNING, logger="app.ai.groq_client"):
+        client.post("/generate", json={"prompt": "Create a block."})
+    assert any("Groq request failed" in rec.message for rec in caplog.records)
+
+
 def test_empty_prompt_rejected_without_calling_groq(monkeypatch):
     def fail_if_called(*args, **kwargs):
         raise AssertionError("Groq must not be called for an empty prompt")

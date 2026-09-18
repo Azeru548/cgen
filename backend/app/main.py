@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from .ai import groq_client
 from .cad import cadquery_engine
 
-app = FastAPI(title="cgen PoC — FastAPI + CadQuery", version="0.2.0")
+app = FastAPI(title="cgen PoC — FastAPI + CadQuery", version="0.2.1")
 
 # Prompt guardrails: empty prompts are user errors (400); very long prompts
 # are rejected before spending an AI call on them.
