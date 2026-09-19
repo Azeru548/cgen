@@ -814,6 +814,90 @@ button { font: inherit; }
   .viewport { min-height: 280px; }
 }
 
+/* --- project session bar (Project → Workspace → Revision) --- */
+
+.session-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.session-project {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-secondary);
+}
+
+.session-tabs { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+
+.session-tab {
+  border: 1px solid var(--border);
+  background: var(--surface-subtle);
+  border-radius: 3px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.7rem;
+  cursor: pointer;
+  color: var(--ink-secondary);
+}
+
+.session-tab.active {
+  border-color: var(--accent);
+  color: var(--ink);
+  background: #fdf3ee;
+}
+
+.session-spacer { flex: 1; }
+
+.session-action {
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  border-radius: 3px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.7rem;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.session-action:hover:not(:disabled) { border-color: var(--accent); }
+
+.session-action:disabled { opacity: 0.45; cursor: default; }
+
+/* --- revision history list --- */
+
+.rev-list { display: flex; flex-direction: column; gap: 0.25rem; }
+
+.rev-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  background: var(--surface);
+  border-radius: 3px;
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+}
+
+.rev-item.active { border-left-color: var(--accent); background: #fdf3ee; }
+
+.rev-item-title { font-family: var(--mono); font-size: 0.66rem; color: var(--ink); }
+
+.rev-item-prompt {
+  font-size: 0.7rem;
+  color: var(--ink-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }

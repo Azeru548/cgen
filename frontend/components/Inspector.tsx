@@ -6,19 +6,29 @@
  * Downloads combo with a denser, CAD-inspector-style layout.
  */
 import { Downloads } from "./Downloads";
+import { RevisionHistory } from "./RevisionHistory";
 import { SpecPanel } from "./SpecPanel";
 import type { GenerateResponse } from "@/types/api";
+import type { Workspace } from "@/types/revisions";
 
 interface InspectorProps {
   result: GenerateResponse | null;
   status: string;
+  workspace: Workspace;
+  onSelectRevision: (revisionId: string) => void;
 }
 
-export function Inspector({ result, status }: InspectorProps) {
+export function Inspector({
+  result,
+  status,
+  workspace,
+  onSelectRevision,
+}: InspectorProps) {
   return (
     <>
       <div className="inspector-header">Inspector</div>
       <div className="inspector-body">
+        <RevisionHistory workspace={workspace} onSelect={onSelectRevision} />
         {result && status === "ready" ? (
           <SpecPanel result={result} />
         ) : (

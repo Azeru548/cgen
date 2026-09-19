@@ -14,7 +14,18 @@ import {
   resolveFileUrl,
   type ApiError,
 } from "@/lib/api";
-import type { BackendHealth, GenerateResponse } from "@/types/api";
+import {
+  addWorkspace,
+  appendRevision,
+  clearViewer,
+  createProject,
+  getActiveWorkspace,
+  selectRevision,
+  switchWorkspace,
+  visibleRevision,
+} from "@/lib/revisions";
+import type { BackendHealth } from "@/types/api";
+import type { Project } from "@/types/revisions";
 
 type PageStatus = "idle" | "generating" | "ready" | "error";
 type EngineState = "ready" | "processing" | "error" | "unknown";
@@ -38,8 +49,12 @@ function detectWebgl(): boolean {
 export default function Home() {
   const [prompt, setPrompt] = useState("");
   const [status, setStatus] = useState<PageStatus>("idle");
-  const [result, setResult] = useState<GenerateResponse | null>(null);
-  const [stlUrl, setStlUrl] = useState<string | null>(null);
+  // Project → Workspace → Revision model: revisions are append-only, so a
+  // generate/modify never destroys previous specs. The viewer shows the
+  // visible (active, non-cleared) revision of the active workspace.
+  const [project, setProject] = useState<Project>(() =>
+    createProject("Mechanical Bracket"),
+  );
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [health, setHealth] = useState<BackendHealth | null>(null);
@@ -72,6 +87,14 @@ export default function Home() {
     return () => abortRef.current?.abort();
   }, []);
 
+  const activeWorkspace = useMemo(() => getActiveWorkspace(project), [project]);
+  const visible = useMemo(
+    () => visibleRevision(activeWorkspace),
+    [activeWorkspace],
+  );
+  const result = visible?.response ?? null;
+  const stlUrl = result ? resolveFileUrl(result.files.stl.download_url) : null;
+
   const handleGenerate = useCallback(async () => {
     if (status === "generating") return;
     if (prompt.trim().length === 0) {
@@ -86,9 +109,9 @@ export default function Home() {
     setGenerateError(null);
     setPreviewError(null);
     try {
-      const response = await generatePart(prompt.trim(), controller.signal);
-      setResult(response);
-      setStlUrl(resolveFileUrl(response.files.stl.download_url));
+      const text = prompt.trim();
+      const response = await generatePart(text, controller.signal);
+      setProject((p) => appendRevision(p, "generate", text, response));
       setStatus("ready");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
@@ -98,7 +121,7 @@ export default function Home() {
   }, [prompt, status]);
 
   const handleModify = useCallback(async () => {
-    if (status === "generating" || result === null) return;
+    if (status === "generating" || visible === null) return;
     if (prompt.trim().length === 0) {
       setGenerateError("Describe the modification \u2014 the prompt is empty.");
       setStatus("error");
@@ -111,20 +134,57 @@ export default function Home() {
     setGenerateError(null);
     setPreviewError(null);
     try {
+      const text = prompt.trim();
       const response = await modifyPart(
-        result.specification as unknown as Record<string, unknown>,
-        prompt.trim(),
+        visible.response.specification as unknown as Record<string, unknown>,
+        text,
         controller.signal,
       );
-      setResult(response);
-      setStlUrl(resolveFileUrl(response.files.stl.download_url));
+      setProject((p) => appendRevision(p, "modify", text, response));
       setStatus("ready");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setGenerateError(humanizeApiError(err as ApiError));
       setStatus("error");
     }
-  }, [prompt, status, result]);
+  }, [prompt, status, visible]);
+
+  const handleNewWorkspace = useCallback(() => {
+    setProject((p) => addWorkspace(p, `Workspace ${p.workspaces.length + 1}`));
+    setPrompt("");
+    setGenerateError(null);
+    setPreviewError(null);
+    setStatus("idle");
+  }, []);
+
+  const handleClearViewer = useCallback(() => {
+    abortRef.current?.abort();
+    setProject((p) => clearViewer(p));
+    setGenerateError(null);
+    setPreviewError(null);
+    setStatus("idle");
+  }, []);
+
+  const handleSelectWorkspace = useCallback(
+    (workspaceId: string) => {
+      setProject((p) => {
+        const next = switchWorkspace(p, workspaceId);
+        const target = getActiveWorkspace(next);
+        setGenerateError(null);
+        setPreviewError(null);
+        setStatus(visibleRevision(target) === null ? "idle" : "ready");
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleSelectRevision = useCallback((revisionId: string) => {
+    setProject((p) => selectRevision(p, revisionId));
+    setGenerateError(null);
+    setPreviewError(null);
+    setStatus("ready");
+  }, []);
 
   const handlePreviewStatus = useCallback(
     (state: PreviewState, message?: string) => {
@@ -145,14 +205,14 @@ export default function Home() {
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
-        if (result !== null) {
+        if (visible !== null) {
           handleModify();
         } else {
           handleGenerate();
         }
       }
     },
-    [handleGenerate, handleModify, result],
+    [handleGenerate, handleModify, visible],
   );
 
   const busy = status === "generating";
@@ -215,6 +275,44 @@ export default function Home() {
         </div>
       </header>
 
+      <div className="session-bar" role="toolbar" aria-label="Project workspaces">
+        <span className="session-project" title="Active project">
+          {project.name}
+        </span>
+        <div className="session-tabs" role="tablist" aria-label="Workspaces">
+          {project.workspaces.map((w) => (
+            <button
+              key={w.id}
+              role="tab"
+              aria-selected={w.id === activeWorkspace.id}
+              className={`session-tab${w.id === activeWorkspace.id ? " active" : ""}`}
+              onClick={() => handleSelectWorkspace(w.id)}
+              disabled={busy}
+              title={`${w.name} · ${w.revisions.length} revision${w.revisions.length === 1 ? "" : "s"}`}
+            >
+              {w.name} ({w.revisions.length})
+            </button>
+          ))}
+        </div>
+        <span className="session-spacer" />
+        <button
+          className="session-action"
+          onClick={handleClearViewer}
+          disabled={busy || visible === null}
+          title="Remove the displayed result; project, workspace and revisions are kept"
+        >
+          Clear viewer
+        </button>
+        <button
+          className="session-action"
+          onClick={handleNewWorkspace}
+          disabled={busy}
+          title="Start a fresh empty workspace without affecting existing ones"
+        >
+          + New workspace
+        </button>
+      </div>
+
       <main className="layout">
         <div className="workspace-main">
           <CadViewport
@@ -230,7 +328,7 @@ export default function Home() {
             {status === "error" && generateError ? (
               <div className="error-box">
                 <div className="error-title">
-                  {result !== null ? "Modification failed" : "Generation failed"}
+                  {visible !== null ? "Modification failed" : "Generation failed"}
                 </div>
                 <div className="error-text">{generateError}</div>
               </div>
@@ -240,7 +338,7 @@ export default function Home() {
                 ref={textareaRef}
                 className="prompt-input"
                 placeholder={
-                  result !== null
+                  visible !== null
                     ? "Describe how to modify this part..."
                     : "Describe the part you want to build..."
                 }
@@ -250,15 +348,15 @@ export default function Home() {
                 disabled={busy}
                 rows={2}
                 maxLength={MAX_PROMPT_LENGTH}
-                aria-label={result !== null ? "Modification instruction" : "Part description"}
+                aria-label={visible !== null ? "Modification instruction" : "Part description"}
               />
               <button
                 className="generate-button"
-                onClick={result !== null ? handleModify : handleGenerate}
+                onClick={visible !== null ? handleModify : handleGenerate}
                 disabled={busy || prompt.trim().length === 0}
-                aria-label={result !== null ? "Modify CAD model" : "Generate CAD model"}
+                aria-label={visible !== null ? "Modify CAD model" : "Generate CAD model"}
               >
-                {busy ? "Working..." : result !== null ? "Modify" : "Generate"}
+                {busy ? "Working..." : visible !== null ? "Modify" : "Generate"}
               </button>
             </div>
             <div className="prompt-footer">
@@ -266,14 +364,19 @@ export default function Home() {
                 {prompt.length} / {MAX_PROMPT_LENGTH}
               </span>
               <span className="char-count">
-                Ctrl+Enter to {result !== null ? "modify" : "generate"}
+                Ctrl+Enter to {visible !== null ? "modify" : "generate"}
               </span>
             </div>
           </div>
         </div>
 
         <aside className="inspector">
-          <Inspector result={result} status={status} />
+          <Inspector
+            result={result}
+            status={status}
+            workspace={activeWorkspace}
+            onSelectRevision={handleSelectRevision}
+          />
         </aside>
       </main>
     </div>
