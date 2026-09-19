@@ -10,6 +10,7 @@ import {
   checkBackendHealth,
   generatePart,
   humanizeApiError,
+  modifyPart,
   resolveFileUrl,
   type ApiError,
 } from "@/lib/api";
@@ -96,6 +97,35 @@ export default function Home() {
     }
   }, [prompt, status]);
 
+  const handleModify = useCallback(async () => {
+    if (status === "generating" || result === null) return;
+    if (prompt.trim().length === 0) {
+      setGenerateError("Describe the modification \u2014 the prompt is empty.");
+      setStatus("error");
+      return;
+    }
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setStatus("generating");
+    setGenerateError(null);
+    setPreviewError(null);
+    try {
+      const response = await modifyPart(
+        result.specification as unknown as Record<string, unknown>,
+        prompt.trim(),
+        controller.signal,
+      );
+      setResult(response);
+      setStlUrl(resolveFileUrl(response.files.stl.download_url));
+      setStatus("ready");
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setGenerateError(humanizeApiError(err as ApiError));
+      setStatus("error");
+    }
+  }, [prompt, status, result]);
+
   const handlePreviewStatus = useCallback(
     (state: PreviewState, message?: string) => {
       if (state === "error") {
@@ -115,10 +145,14 @@ export default function Home() {
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
-        handleGenerate();
+        if (result !== null) {
+          handleModify();
+        } else {
+          handleGenerate();
+        }
       }
     },
-    [handleGenerate],
+    [handleGenerate, handleModify, result],
   );
 
   const busy = status === "generating";
@@ -195,7 +229,9 @@ export default function Home() {
           <div className="prompt-bar">
             {status === "error" && generateError ? (
               <div className="error-box">
-                <div className="error-title">Generation failed</div>
+                <div className="error-title">
+                  {result !== null ? "Modification failed" : "Generation failed"}
+                </div>
                 <div className="error-text">{generateError}</div>
               </div>
             ) : null}
@@ -203,29 +239,35 @@ export default function Home() {
               <textarea
                 ref={textareaRef}
                 className="prompt-input"
-                placeholder="Describe the part you want to build..."
+                placeholder={
+                  result !== null
+                    ? "Describe how to modify this part..."
+                    : "Describe the part you want to build..."
+                }
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 onKeyDown={handlePromptKeyDown}
                 disabled={busy}
                 rows={2}
                 maxLength={MAX_PROMPT_LENGTH}
-                aria-label="Part description"
+                aria-label={result !== null ? "Modification instruction" : "Part description"}
               />
               <button
                 className="generate-button"
-                onClick={handleGenerate}
+                onClick={result !== null ? handleModify : handleGenerate}
                 disabled={busy || prompt.trim().length === 0}
-                aria-label="Generate CAD model"
+                aria-label={result !== null ? "Modify CAD model" : "Generate CAD model"}
               >
-                {busy ? "Generating..." : "Generate"}
+                {busy ? "Working..." : result !== null ? "Modify" : "Generate"}
               </button>
             </div>
             <div className="prompt-footer">
               <span className="char-count">
                 {prompt.length} / {MAX_PROMPT_LENGTH}
               </span>
-              <span className="char-count">Ctrl+Enter to generate</span>
+              <span className="char-count">
+                Ctrl+Enter to {result !== null ? "modify" : "generate"}
+              </span>
             </div>
           </div>
         </div>

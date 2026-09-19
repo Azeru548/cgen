@@ -749,3 +749,424 @@ def test_request_ids_unique_per_request(monkeypatch, tmp_path):
     first = client.post("/generate", json={"prompt": "one"}).json()["request_id"]
     second = client.post("/generate", json={"prompt": "two"}).json()["request_id"]
     assert first and second and first != second
+
+
+# --- Milestone 7: POST /modify (all mocked, no CadQuery, no network) -------
+
+
+BOX_SPEC = {
+    "document_type": "3d_part",
+    "units": "mm",
+    "name": "rectangular_block",
+    "operation": {"type": "box", "width": 100, "depth": 60, "height": 30},
+}
+
+MODIFIED_BOX_SPEC = {
+    "document_type": "3d_part",
+    "units": "mm",
+    "name": "rectangular_block",
+    "operation": {"type": "box", "width": 100, "depth": 60, "height": 80},
+}
+
+PART_WITH_HOLE_SPEC = {
+    "document_type": "3d_part",
+    "units": "mm",
+    "name": "plate_with_hole",
+    "operation": {
+        "type": "part",
+        "build": {"type": "box", "width": 100, "depth": 60, "height": 10},
+        "features": [{"type": "hole", "diameter": 8, "through": True}],
+    },
+}
+
+PART_WITH_LARGER_HOLE_SPEC = {
+    "document_type": "3d_part",
+    "units": "mm",
+    "name": "plate_with_hole",
+    "operation": {
+        "type": "part",
+        "build": {"type": "box", "width": 100, "depth": 60, "height": 10},
+        "features": [{"type": "hole", "diameter": 12, "through": True}],
+    },
+}
+
+PART_WITH_PATTERN_SPEC = {
+    "document_type": "3d_part",
+    "units": "mm",
+    "name": "flange_plate",
+    "operation": {
+        "type": "part",
+        "build": {"type": "cylinder", "radius": 50, "height": 15},
+        "features": [
+            {
+                "type": "hole_pattern",
+                "diameter": 8,
+                "count": 4,
+                "circle_diameter": 70,
+                "through": True,
+            }
+        ],
+    },
+}
+
+PART_WITH_6_HOLES_SPEC = {
+    "document_type": "3d_part",
+    "units": "mm",
+    "name": "flange_plate",
+    "operation": {
+        "type": "part",
+        "build": {"type": "cylinder", "radius": 50, "height": 15},
+        "features": [
+            {
+                "type": "hole_pattern",
+                "diameter": 8,
+                "count": 6,
+                "circle_diameter": 70,
+                "through": True,
+            }
+        ],
+    },
+}
+
+PART_WITH_BLIND_HOLE_SPEC = {
+    "document_type": "3d_part",
+    "units": "mm",
+    "name": "plate_with_hole",
+    "operation": {
+        "type": "part",
+        "build": {"type": "box", "width": 100, "depth": 60, "height": 10},
+        "features": [{"type": "hole", "diameter": 8, "through": False, "depth": 5}],
+    },
+}
+
+
+def _modify_fake_client(modified_spec_dict, captured=None):
+    """Fake Groq client for modify_spec that returns a fixed modified spec."""
+    content = json.dumps(modified_spec_dict, separators=(",", ":"))
+
+    def create(**kwargs):
+        if captured is not None:
+            captured.update(kwargs)
+        msg = SimpleNamespace(content=content)
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+import json
+
+
+def test_modify_dimension_change_mocked(monkeypatch, tmp_path):
+    """M7: change a dimension (height 30 -> 80) through /modify."""
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    step_path, stl_path = _write_valid_pair(tmp_path, stem="modified_box")
+    captured = {}
+
+    monkeypatch.setattr(
+        groq_client,
+        "_get_client",
+        lambda key: _modify_fake_client(MODIFIED_BOX_SPEC, captured),
+    )
+    monkeypatch.setattr(
+        "app.services.generation.cadquery_engine.export_box",
+        lambda **kw: {
+            "step_path": step_path,
+            "stl_path": stl_path,
+            "step_bytes": 100,
+            "stl_bytes": 200,
+        },
+    )
+
+    r = client.post(
+        "/modify",
+        json={
+            "specification": BOX_SPEC,
+            "instruction": "Make the height 80mm instead of 30mm.",
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "completed"
+    assert body["specification"]["operation"]["height"] == 80.0
+    assert body["specification"]["operation"]["width"] == 100.0
+    assert body["specification"]["operation"]["depth"] == 60.0
+    assert body["files"]["step"]["download_url"].startswith("/download/")
+    assert body["files"]["stl"]["download_url"].startswith("/download/")
+    # Verify the modification system prompt was used
+    system_msg = captured["messages"][0]["content"]
+    assert "modify" in system_msg.lower()
+
+
+def test_modify_hole_diameter_mocked(monkeypatch, tmp_path):
+    """M7: change hole diameter from 8mm to 12mm."""
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    step_path, stl_path = _write_valid_pair(tmp_path, stem="modified_hole")
+    captured = {}
+
+    monkeypatch.setattr(
+        groq_client,
+        "_get_client",
+        lambda key: _modify_fake_client(PART_WITH_LARGER_HOLE_SPEC, captured),
+    )
+    monkeypatch.setattr(
+        "app.services.generation.cadquery_engine.export_operation",
+        lambda op, name="part", **kw: {
+            "operation": op.type,
+            "step_path": step_path,
+            "stl_path": stl_path,
+            "step_bytes": 100,
+            "stl_bytes": 200,
+        },
+    )
+
+    r = client.post(
+        "/modify",
+        json={
+            "specification": PART_WITH_HOLE_SPEC,
+            "instruction": "Change the hole diameter from 8mm to 12mm.",
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    features = body["specification"]["operation"]["features"]
+    assert len(features) == 1
+    assert features[0]["type"] == "hole"
+    assert features[0]["diameter"] == 12.0
+
+
+def test_modify_pattern_count_mocked(monkeypatch, tmp_path):
+    """M7: change hole_pattern count from 4 to 6."""
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    step_path, stl_path = _write_valid_pair(tmp_path, stem="modified_pattern")
+    captured = {}
+
+    monkeypatch.setattr(
+        groq_client,
+        "_get_client",
+        lambda key: _modify_fake_client(PART_WITH_6_HOLES_SPEC, captured),
+    )
+    monkeypatch.setattr(
+        "app.services.generation.cadquery_engine.export_operation",
+        lambda op, name="part", **kw: {
+            "operation": op.type,
+            "step_path": step_path,
+            "stl_path": stl_path,
+            "step_bytes": 100,
+            "stl_bytes": 200,
+        },
+    )
+
+    r = client.post(
+        "/modify",
+        json={
+            "specification": PART_WITH_PATTERN_SPEC,
+            "instruction": "Change to 6 holes instead of 4.",
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    features = body["specification"]["operation"]["features"]
+    assert features[0]["type"] == "hole_pattern"
+    assert features[0]["count"] == 6
+
+
+def test_modify_through_to_blind_mocked(monkeypatch, tmp_path):
+    """M7: convert a through hole to a blind hole with 5mm depth."""
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    step_path, stl_path = _write_valid_pair(tmp_path, stem="blind_hole")
+    captured = {}
+
+    monkeypatch.setattr(
+        groq_client,
+        "_get_client",
+        lambda key: _modify_fake_client(PART_WITH_BLIND_HOLE_SPEC, captured),
+    )
+    monkeypatch.setattr(
+        "app.services.generation.cadquery_engine.export_operation",
+        lambda op, name="part", **kw: {
+            "operation": op.type,
+            "step_path": step_path,
+            "stl_path": stl_path,
+            "step_bytes": 100,
+            "stl_bytes": 200,
+        },
+    )
+
+    r = client.post(
+        "/modify",
+        json={
+            "specification": PART_WITH_HOLE_SPEC,
+            "instruction": "Make the hole blind with a depth of 5mm.",
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    features = body["specification"]["operation"]["features"]
+    assert features[0]["through"] is False
+    assert features[0]["depth"] == 5.0
+
+
+def test_modify_empty_instruction_rejected(monkeypatch):
+    """M7: empty instruction returns 400 without calling Groq."""
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("Groq must not be called for an empty instruction")
+
+    monkeypatch.setattr(groq_client, "modify_spec", fail_if_called)
+    r = client.post("/modify", json={"specification": BOX_SPEC, "instruction": ""})
+    assert r.status_code == 400, r.text
+    r = client.post("/modify", json={"specification": BOX_SPEC, "instruction": "   "})
+    assert r.status_code == 400, r.text
+
+
+def test_modify_oversized_instruction_rejected(monkeypatch):
+    """M7: instruction exceeding MAX_INSTRUCTION_LENGTH returns 400."""
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("Groq must not be called for oversized instruction")
+
+    monkeypatch.setattr(groq_client, "modify_spec", fail_if_called)
+    r = client.post(
+        "/modify",
+        json={"specification": BOX_SPEC, "instruction": "x" * 2001},
+    )
+    assert r.status_code == 400, r.text
+
+
+def test_modify_diff_guard_rejects_unrelated_change(monkeypatch):
+    """M7: diff guard rejects modification that changes document_type."""
+    from app.services.generation import ModificationRejectedError, validate_modification
+    from app.cad.schema import CADSpec
+
+    old = CADSpec.model_validate(BOX_SPEC)
+    bad_new = CADSpec.model_validate(BOX_SPEC)
+    # Force a change that the diff guard should catch
+    # We'll test the validate_modification function directly
+    # by creating a spec that changes constants
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+
+    # Test the diff guard directly
+    changed_spec = {
+        "document_type": "3d_part",
+        "units": "mm",
+        "name": "different_name",
+        "operation": {"type": "box", "width": 100, "depth": 60, "height": 30},
+    }
+    new_spec = CADSpec.model_validate(changed_spec)
+    try:
+        validate_modification(old, new_spec, "just make it taller")
+        assert False, "Should have raised ModificationRejectedError"
+    except ModificationRejectedError:
+        pass  # expected
+
+
+def test_modify_preserves_unrelated_fields(monkeypatch, tmp_path):
+    """M7: modification preserves width and depth when only height changes."""
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    step_path, stl_path = _write_valid_pair(tmp_path, stem="preserve_fields")
+
+    monkeypatch.setattr(
+        groq_client,
+        "_get_client",
+        lambda key: _modify_fake_client(MODIFIED_BOX_SPEC),
+    )
+    monkeypatch.setattr(
+        "app.services.generation.cadquery_engine.export_box",
+        lambda **kw: {
+            "step_path": step_path,
+            "stl_path": stl_path,
+            "step_bytes": 100,
+            "stl_bytes": 200,
+        },
+    )
+
+    r = client.post(
+        "/modify",
+        json={"specification": BOX_SPEC, "instruction": "Make it taller"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    op = body["specification"]["operation"]
+    assert op["width"] == 100.0, "width should be preserved"
+    assert op["depth"] == 60.0, "depth should be preserved"
+    assert op["height"] == 80.0, "height should be modified"
+
+
+def test_modify_success_path_returns_same_contract_as_generate(monkeypatch, tmp_path):
+    """M7: /modify returns the same response shape as /generate."""
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    step_path, stl_path = _write_valid_pair(tmp_path, stem="contract_check")
+
+    monkeypatch.setattr(
+        groq_client,
+        "_get_client",
+        lambda key: _modify_fake_client(MODIFIED_BOX_SPEC),
+    )
+    monkeypatch.setattr(
+        "app.services.generation.cadquery_engine.export_box",
+        lambda **kw: {
+            "step_path": step_path,
+            "stl_path": stl_path,
+            "step_bytes": 100,
+            "stl_bytes": 200,
+        },
+    )
+
+    r = client.post(
+        "/modify",
+        json={"specification": BOX_SPEC, "instruction": "Make it taller"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Same contract as /generate
+    assert body["status"] == "completed"
+    assert isinstance(body["request_id"], str) and body["request_id"]
+    assert body["units"] == "mm"
+    assert body["generation_time_ms"] >= 0
+    assert "step" in body["files"] and "stl" in body["files"]
+    step_meta = body["files"]["step"]
+    assert step_meta["format"] == "step"
+    assert step_meta["filename"].endswith(".step")
+    assert step_meta["bytes"] > 0
+    assert step_meta["download_url"].startswith("/download/")
+
+
+def test_modify_missing_api_key_is_server_error(monkeypatch):
+    """M7: missing API key returns 500."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    r = client.post(
+        "/modify",
+        json={"specification": BOX_SPEC, "instruction": "Make it taller"},
+    )
+    assert r.status_code == 500, r.text
+    assert "GROQ_API_KEY" in r.json()["detail"]
+
+
+def test_modify_invalid_groq_json_is_bad_gateway(monkeypatch):
+    """M7: non-JSON from Groq returns 502."""
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setattr(
+        groq_client, "_get_client", lambda key: make_fake_client("not json {{{")
+    )
+    r = client.post(
+        "/modify",
+        json={"specification": BOX_SPEC, "instruction": "Make it taller"},
+    )
+    assert r.status_code == 502, r.text
+
+
+def test_modify_invalid_spec_from_model_is_422(monkeypatch):
+    """M7: model returns invalid CADSpec returns 422."""
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    bad = (
+        '{"document_type": "3d_part", "units": "mm", "name": "bad", '
+        '"operation": {"type": "box", "width": -5, "depth": 60, "height": 30}}'
+    )
+    monkeypatch.setattr(groq_client, "_get_client", lambda key: make_fake_client(bad))
+    r = client.post(
+        "/modify",
+        json={"specification": BOX_SPEC, "instruction": "Make it taller"},
+    )
+    assert r.status_code == 422, r.text

@@ -118,6 +118,40 @@ export async function generatePart(
   return parseGenerateResponse(data);
 }
 
+export async function modifyPart(
+  specification: Record<string, unknown>,
+  instruction: string,
+  signal?: AbortSignal,
+): Promise<GenerateResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/modify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ specification, instruction }),
+      signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
+    throw new ApiError("Cannot reach the CAD service.", null);
+  }
+  if (!response.ok) {
+    const detail = await readDetail(response);
+    throw new ApiError(
+      `Modification failed (HTTP ${response.status}).`,
+      response.status,
+      detail,
+    );
+  }
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    throw new ApiError("Malformed API response.", response.status);
+  }
+  return parseGenerateResponse(data);
+}
+
 export async function checkBackendHealth(): Promise<BackendHealth | null> {
   try {
     const response = await fetch(`${API_BASE_URL}/health`, { method: "GET" });

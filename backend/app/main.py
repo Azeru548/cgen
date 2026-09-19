@@ -6,6 +6,8 @@ Milestone 4: + production-grade generation API (clean contract, file store,
 Milestone 6: + schema v3.0 (torus, polygon_prism, intersect, part features:
   hole/fillet/chamfer/shell) with unchanged API contracts.
   Schema v3.1 adds the hole_pattern feature (bolt-circle holes); contracts unchanged.
+Milestone 7: + POST /modify (natural-language modification of existing specs
+  with structural diff guard).
 
 Endpoints (Milestone 1, unchanged):
   GET /health    -> liveness, reports whether CadQuery imports OK
@@ -15,6 +17,9 @@ Endpoints (Milestone 1, unchanged):
 Milestone 4:
   POST /generate      -> prompt -> Groq -> CADSpec -> CAD engine -> files
   GET /download/{token} -> download a generated STEP/STL pair by token
+
+Milestone 7:
+  POST /modify        -> spec + instruction -> Groq -> diff guard -> CAD -> files
 
 No auth, no DB. Ephemeral disk only.
 """
@@ -35,7 +40,13 @@ from pydantic import BaseModel, Field
 
 from .ai import groq_client
 from .services.file_store import FileStore
-from .services.generation import InvalidPromptError, run_generation
+from .services.generation import (
+    InvalidModificationError,
+    InvalidPromptError,
+    ModificationRejectedError,
+    run_generation,
+    run_modification,
+)
 
 logger = logging.getLogger("cgen.api")
 
@@ -75,6 +86,15 @@ class GenerateRequest(BaseModel):
     prompt: str = Field(
         description="Natural-language description of the 3D part to generate. "
         "1-2000 characters; dimensions in any common unit (normalized to mm)."
+    )
+
+
+class ModifyRequest(BaseModel):
+    specification: dict = Field(
+        description="Current valid CAD specification (from a previous /generate or /modify response)."
+    )
+    instruction: str = Field(
+        description="Natural-language modification instruction. 1-2000 characters."
     )
 
 
@@ -257,6 +277,66 @@ def generate(body: GenerateRequest):
     except groq_client.AIGenerationError as e:
         raise HTTPException(status_code=502, detail=str(e))
     except groq_client.SpecValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return GenerateResponse(
+        status="completed",
+        request_id=result.request_id,
+        specification=result.specification,
+        units=result.units,
+        generation_time_ms=result.generation_time_ms,
+        files={
+            key: FileMetadata(
+                format=meta.format,
+                filename=meta.filename,
+                bytes=meta.bytes,
+                download_url=meta.download_url,
+            )
+            for key, meta in result.files.items()
+        },
+    )
+
+
+@app.post(
+    "/modify",
+    response_model=GenerateResponse,
+    responses={
+        400: {"description": "Invalid request: empty instruction or invalid specification."},
+        422: {"description": "Modification rejected by diff guard or CAD validation failed."},
+        500: {"description": "Server misconfiguration or CAD generation failure."},
+        502: {"description": "Groq API failure (auth, model, rate limit, network)."},
+    },
+)
+def modify(body: ModifyRequest):
+    """Modify an existing part based on a natural-language instruction.
+
+    Pipeline: spec + instruction -> Groq modification -> diff guard ->
+    deterministic CadQuery engine -> validated STEP/STL + download tokens.
+    The diff guard rejects modifications that change unrelated fields.
+    """
+    request_id = uuid.uuid4().hex
+    try:
+        result = run_modification(
+            body.specification,
+            body.instruction,
+            request_id=request_id,
+            file_store=file_store,
+        )
+    except InvalidModificationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except groq_client.GroqConfigError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except groq_client.AIGenerationError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except groq_client.SpecValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except groq_client.SpecModificationError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except ModificationRejectedError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))

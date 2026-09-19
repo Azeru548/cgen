@@ -321,3 +321,109 @@ def parse_prompt_to_spec(prompt: str, *, client=None) -> CADSpec:
         raise SpecValidationError(
             f"AI specification failed validation: {details}"
         ) from e
+
+
+MODIFY_SYSTEM_PROMPT = """You modify an existing JSON CAD specification based on a natural-language instruction.
+
+You receive:
+1. The current valid CAD specification (JSON).
+2. A modification instruction from the user.
+
+You MUST return a modified CAD specification that follows the same schema.
+
+Rules you MUST follow:
+- Return JSON ONLY. No markdown, no explanation, no comments, no code fences.
+- NEVER return Python code, CadQuery code, or any executable code.
+- Preserve the document_type, units, and name fields unless the instruction explicitly asks to rename.
+- Only change fields that are directly relevant to the instruction. Do NOT modify unrelated fields.
+- Keep all the same operation types: "box", "cylinder", "cone", "sphere", "torus", "polygon_prism", "union", "cut", "intersect", "part".
+- Do NOT invent new operation types.
+- Convert ALL dimensions to millimeters (mm) if not already.
+- Every dimension must be > 0 and <= 10000.
+- Keep nesting shallow: at most 4 levels, at most 15 operations total.
+- Features: "hole", "hole_pattern", "fillet", "chamfer", "shell" — same rules as generation.
+- At most 4 features per part node.
+
+Examples of valid modifications:
+- "make it 50mm taller" → increase the height dimension by 50
+- "add a 10mm through hole" → add a part node with hole feature or modify existing
+- "change the hole diameter to 12mm" → update the diameter on the existing hole
+- "round the edges with 2mm fillet" → add fillet feature
+- "make it a cylinder instead of a box" → change the operation type (rebuild tree)
+
+Return EXACTLY the full modified specification as JSON:
+{"document_type": "3d_part", "units": "mm", "name": "...", "operation": {...}}
+"""
+
+
+class SpecModificationError(RuntimeError):
+    """Modification LLM call failed or returned unusable output."""
+
+
+def modify_spec(
+    current_spec_json: str,
+    instruction: str,
+    *,
+    client=None,
+) -> CADSpec:
+    """Modify an existing CAD spec based on a natural-language instruction.
+
+    `current_spec_json` is the JSON-serialized current CADSpec.
+    `instruction` is the user's modification request.
+    `client` is injectable for tests.
+    Returns the modified and validated CADSpec.
+    Raises SpecModificationError on failure.
+    """
+    api_key = _get_api_key()
+    client = client if client is not None else _get_client(api_key)
+    model = os.environ.get("GROQ_MODEL", GROQ_MODEL_DEFAULT)
+
+    user_content = (
+        f"Current specification:\n{current_spec_json}\n\n"
+        f"Modification instruction:\n{instruction}"
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": MODIFY_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+    except (GroqConfigError, AIGenerationError):
+        raise
+    except Exception as e:
+        detail = _describe_request_error(e, model)
+        logger.warning("Groq modification request failed (model=%s): %s", model, detail)
+        raise SpecModificationError(detail) from e
+
+    try:
+        content = response.choices[0].message.content
+    except Exception as e:
+        raise SpecModificationError(
+            f"Groq returned an unexpected modification response: {e}"
+        ) from e
+
+    if not content or not content.strip():
+        raise SpecModificationError("Groq returned an empty modification response.")
+
+    try:
+        data = json.loads(_extract_json(content))
+    except Exception as e:
+        raise SpecModificationError(
+            "Groq did not return valid JSON for modification."
+        ) from e
+
+    try:
+        return CADSpec.model_validate(data)
+    except ValidationError as e:
+        details = "; ".join(
+            f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}"
+            for err in e.errors()[:3]
+        )
+        raise SpecValidationError(
+            f"Modified specification failed validation: {details}"
+        ) from e
