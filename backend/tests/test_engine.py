@@ -450,6 +450,123 @@ def test_part_too_thick_shell_rejected_cleanly():
         cadquery_engine.build_operation(spec.operation)
 
 
+# --- Milestone 6: hole_pattern ------------------------------------------------
+
+
+def build_pattern_part(count=4, **overrides):
+    features = [
+        {
+            "type": "hole_pattern",
+            "diameter": 8,
+            "count": count,
+            "circle_diameter": 60,
+            "through": True,
+            "depth": None,
+        }
+    ]
+    features[0].update(overrides)
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "pattern_plate",
+            "operation": {
+                "type": "part",
+                "build": {"type": "box", "width": 100, "depth": 100, "height": 10},
+                "features": features,
+            },
+        }
+    )
+    return cadquery_engine.build_operation(spec.operation)
+
+
+def test_pattern_four_through_holes_volume():
+    need_cq()
+    solid = build_pattern_part(4)
+    hole_vol = 4 * math.pi * 16 * 10
+    expected = 100 * 100 * 10 - hole_vol
+    assert solid.Volume() == pytest.approx(expected, rel=1e-4)
+
+
+def test_pattern_eight_through_holes_volume():
+    need_cq()
+    solid = build_pattern_part(8)
+    hole_vol = 8 * math.pi * 16 * 10
+    expected = 100 * 100 * 10 - hole_vol
+    assert solid.Volume() == pytest.approx(expected, rel=1e-4)
+
+
+def test_pattern_blind_holes_volume():
+    need_cq()
+    solid = build_pattern_part(4, through=False, depth=6)
+    hole_vol = 4 * math.pi * 16 * 6
+    expected = 100 * 100 * 10 - hole_vol
+    assert solid.Volume() == pytest.approx(expected, rel=1e-4)
+
+
+def test_pattern_with_central_hole_volume():
+    need_cq()
+    from app.cad.schema import CADSpec as _S
+
+    spec = _S.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "flange",
+            "operation": {
+                "type": "part",
+                "build": {"type": "cylinder", "radius": 50, "height": 15},
+                "features": [
+                    {"type": "hole", "diameter": 40, "through": True},
+                    {
+                        "type": "hole_pattern",
+                        "diameter": 8,
+                        "count": 4,
+                        "circle_diameter": 70,
+                        "through": True,
+                    },
+                ],
+            },
+        }
+    )
+    solid = cadquery_engine.build_operation(spec.operation)
+    central_hole = math.pi * 400 * 15
+    bolt_holes = 4 * math.pi * 16 * 15
+    expected = math.pi * 2500 * 15 - central_hole - bolt_holes
+    assert solid.Volume() == pytest.approx(expected, rel=1e-4)
+
+
+def test_pattern_export():
+    need_cq()
+    from app.cad.schema import CADSpec as _S
+
+    spec = _S.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "flange",
+            "operation": {
+                "type": "part",
+                "build": {"type": "cylinder", "radius": 50, "height": 15},
+                "features": [
+                    {"type": "hole", "diameter": 40, "through": True},
+                    {
+                        "type": "hole_pattern",
+                        "diameter": 8,
+                        "count": 4,
+                        "circle_diameter": 70,
+                        "through": True,
+                    },
+                ],
+            },
+        }
+    )
+    result = cadquery_engine.export_operation(spec.operation, name=spec.name)
+    assert result["operation"] == "part"
+    assert result["step_bytes"] > 0
+    assert result["stl_bytes"] > 0
+
+
 def valid_torus_spec(*, major: float, minor: float):
     return CADSpec.model_validate(
         {

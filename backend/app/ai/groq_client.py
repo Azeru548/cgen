@@ -81,8 +81,19 @@ chamfer -> fillet) and centers holes on the part automatically — never compute
 positions:
 - hole (DIAMETER): through hole {"type": "hole", "diameter": 8, "through": true};
   blind hole {"type": "hole", "diameter": 8, "depth": 12} (depth measured from the
-  top face; a through hole must NOT have depth; several holes = several hole
-  features, at most 4 features total).
+  top face; a through hole must NOT have depth). Use "hole" ONLY for ONE
+  centered hole.
+- hole_pattern (DIAMETERS, ONE feature no matter the count): two or more
+  identical holes equally spaced around a circular bolt circle, e.g.
+  {"type": "hole_pattern", "diameter": 8, "count": 4, "circle_diameter": 60,
+   "through": true}; blind variant takes "depth" instead of "through".
+  "count" is 2-12. "circle_diameter" is the bolt-circle diameter (center to
+  opposite hole centers), NOT the part diameter. Rule of thumb:
+  one centered hole -> "hole"; "four 8mm holes equally spaced around a 60mm
+  bolt circle" / "6 holes on a 50mm bolt circle" / "three 5mm holes equally
+  spaced around the center" -> ONE "hole_pattern". At most 4 features total
+  per part (e.g. central hole + hole_pattern = 2 features). NEVER emit
+  several "hole" features for a bolt circle, and NEVER compute positions.
 - fillet: {"type": "fillet", "radius": 2}
 - chamfer: {"type": "chamfer", "size": 2}
 - shell (hollow with a wall, top face open):

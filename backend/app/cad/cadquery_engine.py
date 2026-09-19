@@ -23,11 +23,14 @@ no offsets or rotation. The engine applies them in a fixed order regardless
 of the order they appear in the spec (the order is the one OCCT handles
 robustly — see _apply_features):
 
-  1. holes    — drilled along +Z, centered on the solid's bounding box;
-                through holes extend through the bbox (same deterministic
-                rule as the legacy through-cylinder cut); concentric holes
-                are applied largest-first (counterbore pattern); blind
-                holes drill from the top (+Z) face down `depth`.
+   1. holes    — drilled along +Z, centered on the solid's bounding box;
+                 through holes extend through the bbox (same deterministic
+                 rule as the legacy through-cylinder cut); concentric holes
+                 are applied largest-first (counterbore pattern); blind
+                 holes drill from the top (+Z) face down `depth`.
+                 hole_pattern cuts N identical holes on a deterministic bolt
+                 circle (hole i at angle 2π·i/count on circle_diameter,
+                 XY-centered); fit/overlap is validated before cutting.
   2. shell    — hollow the solid with a uniform wall, top (+Z) face open.
   3. chamfer  — all convex bbox-boundary edges parallel to X or Y, 45° bevel.
   4. fillet   — same deterministic edge set as chamfer, rounded.
@@ -40,6 +43,7 @@ center. The LLM never computes offsets; placement is deterministic.
 
 from __future__ import annotations
 
+import math
 import re
 import tempfile
 from pathlib import Path
@@ -52,6 +56,7 @@ from .schema import (
     CylinderOperation,
     FilletFeature,
     HoleFeature,
+    HolePatternFeature,
     IntersectOperation,
     PartOperation,
     PolygonPrismOperation,
@@ -229,6 +234,25 @@ def _build_through_tool(cq, base, radius: float):
 # --- Engineering features (Milestone 6) ---------------------------------------
 
 
+def _through_tool_at(cq, solid, radius: float):
+    """Through-hole cutter spanning the solid's full Z extent plus margin,
+    centered on the solid's bounding-box center in X and Y."""
+    return _build_through_tool(cq, solid, radius)
+
+
+def _blind_tool_at(cq, solid, radius: float, depth: float):
+    """Blind-hole cutter: drills from the top (+Z) face down `depth`, with a
+    small deterministic overshoot so the flat tip cuts cleanly. Centered on
+    the solid's bounding-box center in X and Y."""
+    bbox = solid.BoundingBox()
+    height = depth + HOLE_OVERSHOOT_MM
+    tool = cq.Solid.makeCylinder(radius, height)
+    cz = bbox.zmax - depth  # top of the cutter, above the hole floor
+    return tool.translate(
+        cq.Vector((bbox.xmin + bbox.xmax) / 2, (bbox.ymin + bbox.ymax) / 2, cz)
+    )
+
+
 def _cut_hole(solid, feature: HoleFeature):
     """Cut one hole along +Z, centered on the solid's bounding box.
 
@@ -239,14 +263,74 @@ def _cut_hole(solid, feature: HoleFeature):
     cq = _require_cq()
     radius = feature.diameter / 2
     if feature.through:
-        tool = _build_through_tool(cq, solid, radius)
+        tool = _through_tool_at(cq, solid, radius)
         return cut(solid, tool)
     assert feature.depth is not None  # guaranteed by the schema
+    tool = _blind_tool_at(cq, solid, radius, feature.depth)
+    return cut(solid, tool)
+
+
+# Tolerance for bolt-circle fit/overlap checks (mm). Rejections use
+# ValueError so they surface as 422 through the existing error mapping.
+_PATTERN_FIT_TOL_MM = 1e-6
+
+
+def _validate_hole_pattern(solid, feature: HolePatternFeature, other_hole_radii: list) -> None:
+    """Reject bolt circles that cannot work, before cutting anything.
+
+    Deterministic checks against the solid's bounding box (all pattern holes
+    are interior by construction when these pass):
+      - the bolt circle plus one hole radius fits inside the XY half-extents;
+      - adjacent holes do not overlap (chord between centers >= one diameter);
+      - no hole overlaps another centered hole (e.g. the central through hole).
+    """
     bbox = solid.BoundingBox()
-    height = feature.depth + HOLE_OVERSHOOT_MM
-    tool = cq.Solid.makeCylinder(radius, height)
-    cz = bbox.zmax - feature.depth  # top of the cutter, above the hole floor
-    return cut(solid, tool.translate(cq.Vector((bbox.xmin + bbox.xmax) / 2, (bbox.ymin + bbox.ymax) / 2, cz)))
+    hx = (bbox.xmax - bbox.xmin) / 2
+    hy = (bbox.ymax - bbox.ymin) / 2
+    bolt_radius = feature.circle_diameter / 2
+    hole_radius = feature.diameter / 2
+    if bolt_radius + hole_radius > min(hx, hy) + _PATTERN_FIT_TOL_MM:
+        raise ValueError(
+            "hole_pattern does not fit: the bolt circle plus one hole radius "
+            "extends past the part face"
+        )
+    chord = 2 * bolt_radius * math.sin(math.pi / feature.count)
+    if chord < 2 * hole_radius - _PATTERN_FIT_TOL_MM:
+        raise ValueError(
+            "hole_pattern holes overlap each other: reduce the diameter, "
+            "enlarge the bolt circle, or use fewer holes"
+        )
+    for center_radius in other_hole_radii:
+        if bolt_radius < center_radius + hole_radius - _PATTERN_FIT_TOL_MM:
+            raise ValueError(
+                "hole_pattern overlaps the central hole: enlarge the bolt "
+                "circle or use smaller holes"
+            )
+
+
+def _apply_hole_pattern(solid, feature: HolePatternFeature, other_hole_radii: list):
+    """Cut N identical holes on the bolt circle (hole i at 2π·i/count).
+
+    The cutter is built once from the pre-cut solid (interior holes never
+    change the bbox, so every instance is identical) and translated in XY
+    only. Through/blind behavior matches _cut_hole exactly.
+    """
+    cq = _require_cq()
+    assert feature.depth is not None or feature.through  # guaranteed by schema
+    _validate_hole_pattern(solid, feature, other_hole_radii)
+    hole_radius = feature.diameter / 2
+    bolt_radius = feature.circle_diameter / 2
+    if feature.through:
+        tool = _through_tool_at(cq, solid, hole_radius)
+    else:
+        assert feature.depth is not None
+        tool = _blind_tool_at(cq, solid, hole_radius, feature.depth)
+    for i in range(feature.count):
+        angle = 2 * math.pi * i / feature.count
+        dx = bolt_radius * math.cos(angle)
+        dy = bolt_radius * math.sin(angle)
+        solid = cut(solid, tool.translate(cq.Vector(dx, dy, 0)))
+    return solid
 
 
 def _is_axis_aligned_to_xy(edge, tol: float = 1e-6) -> bool:
@@ -344,12 +428,15 @@ def _apply_shell(solid, thickness: float):
 
 
 def _apply_features(solid, features: list):
-    """Apply features in engine-fixed order: holes -> shell -> chamfer -> fillet.
+    """Apply features in engine-fixed order: holes and hole patterns ->
+    shell -> chamfer -> fillet.
 
     The order is NOT the spec's list order — it is the order OCCT handles
     robustly (verified empirically in M6):
       - holes first, while the solid is still full (through tools span the
         true bbox); concentric holes apply largest-first (counterbore);
+        hole patterns apply after single holes so the pattern's
+        center-overlap check sees the finished central holes;
       - shell before edge features (filleting or chamfering first makes the
         subsequent inner offset fail or produce invalid solids whenever the
         radius/size reaches the wall thickness);
@@ -360,6 +447,10 @@ def _apply_features(solid, features: list):
     holes = [f for f in features if isinstance(f, HoleFeature)]
     for feature in sorted(holes, key=lambda h: h.diameter, reverse=True):
         solid = _cut_hole(solid, feature)
+    center_radii = [h.diameter / 2 for h in holes]
+    for feature in features:
+        if isinstance(feature, HolePatternFeature):
+            solid = _apply_hole_pattern(solid, feature, center_radii)
     for feature in features:
         if isinstance(feature, ShellFeature):
             solid = _apply_shell(solid, feature.thickness)

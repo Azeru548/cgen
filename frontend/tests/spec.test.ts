@@ -198,6 +198,22 @@ describe("summarizeFeature", () => {
     const features: CadFeature[] = [
       { type: "hole", diameter: 8, through: true, depth: null },
       { type: "hole", diameter: 8, through: false, depth: 12 },
+      {
+        type: "hole_pattern",
+        diameter: 8,
+        count: 4,
+        circle_diameter: 60,
+        through: true,
+        depth: null,
+      },
+      {
+        type: "hole_pattern",
+        diameter: 8,
+        count: 6,
+        circle_diameter: 80,
+        through: false,
+        depth: 10,
+      },
       { type: "fillet", radius: 2 },
       { type: "chamfer", size: 1.5 },
       { type: "shell", thickness: 3 },
@@ -205,6 +221,8 @@ describe("summarizeFeature", () => {
     expect(features.map(summarizeFeature)).toEqual([
       "Hole ⌀8 through",
       "Hole ⌀8 × 12 deep",
+      "Hole Pattern ⌀8 · 4× · ⌀60 circle",
+      "Hole Pattern ⌀8 · 6× · ⌀80 circle × 10 deep",
       "Fillet r2",
       "Chamfer 1.5",
       "Wall 3",
@@ -222,6 +240,26 @@ describe("summarizeFeature", () => {
       "hole",
       "shell",
       "chamfer",
+      "fillet",
+    ]);
+  });
+
+  it("places hole_pattern at the same index as hole", () => {
+    const sorted = sortFeatures([
+      { type: "fillet", radius: 2 },
+      { type: "shell", thickness: 2 },
+      {
+        type: "hole_pattern",
+        diameter: 8,
+        count: 4,
+        circle_diameter: 60,
+        through: true,
+        depth: null,
+      },
+    ]);
+    expect(sorted.map((f) => f.type)).toEqual([
+      "hole_pattern",
+      "shell",
       "fillet",
     ]);
   });

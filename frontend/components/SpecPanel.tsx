@@ -74,8 +74,8 @@ export function SpecPanel({ result }: SpecPanelProps) {
         <>
           <h3 className="spec-subtitle">Features</h3>
           <ul className="op-tree">
-            {features.map((feature) => (
-              <li key={feature.type}>
+            {features.map((feature, index) => (
+              <li key={`${feature.type}-${index}`}>
                 <span className="mono">{summarizeFeature(feature)}</span>
               </li>
             ))}

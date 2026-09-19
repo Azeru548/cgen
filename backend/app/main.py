@@ -5,6 +5,7 @@ Milestone 4: + production-grade generation API (clean contract, file store,
   request IDs, timing, structured logging).
 Milestone 6: + schema v3.0 (torus, polygon_prism, intersect, part features:
   hole/fillet/chamfer/shell) with unchanged API contracts.
+  Schema v3.1 adds the hole_pattern feature (bolt-circle holes); contracts unchanged.
 
 Endpoints (Milestone 1, unchanged):
   GET /health    -> liveness, reports whether CadQuery imports OK
@@ -87,7 +88,7 @@ class FileMetadata(BaseModel):
 class GenerateResponse(BaseModel):
     status: Literal["completed"] = Field(description="Always 'completed' on success.")
     request_id: str = Field(description="Random ID for this request; see server logs.")
-    specification: dict = Field(description="Validated CAD specification (schema v2.0).")
+    specification: dict = Field(description="Validated CAD specification (schema v3.1).")
     units: str = Field(description="Length unit used throughout: mm.")
     generation_time_ms: int = Field(description="Total backend generation time.")
     files: dict[str, FileMetadata] = Field(

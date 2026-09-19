@@ -651,3 +651,77 @@ def test_shell_position_in_list_is_irrelevant():
     ):
         spec = CADSpec.model_validate(plate_payload(features))
         assert feature_summary(spec.operation) == ["shell", "fillet"]
+
+
+# --- Schema v3.1: hole_pattern ------------------------------------------------
+
+
+def pattern_payload(count=4, **overrides):
+    feature = {
+        "type": "hole_pattern",
+        "diameter": 8,
+        "count": count,
+        "circle_diameter": 60,
+        "through": True,
+    }
+    feature.update(overrides)
+    return plate_payload([feature])
+
+
+def test_valid_hole_pattern_four_holes():
+    spec = CADSpec.model_validate(pattern_payload(4))
+    assert spec.operation.features[0].type == "hole_pattern"
+    assert spec.operation.features[0].count == 4
+
+
+def test_valid_hole_pattern_eight_holes():
+    spec = CADSpec.model_validate(pattern_payload(8))
+    assert spec.operation.features[0].count == 8
+
+
+def test_hole_pattern_count_bounds_rejected():
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(pattern_payload(1))
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(pattern_payload(13))
+
+
+def test_hole_pattern_through_depth_rules():
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(pattern_payload(4, depth=12))
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            pattern_payload(4, through=False, depth=None)
+        )
+    # Blind pattern with depth is valid.
+    spec = CADSpec.model_validate(pattern_payload(4, through=False, depth=6))
+    assert spec.operation.features[0].depth == 6
+
+
+def test_hole_pattern_unknown_fields_rejected():
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(pattern_payload(4, position=[10, 0]))
+
+
+def test_flange_central_hole_plus_pattern_within_cap():
+    spec = CADSpec.model_validate(
+        valid_payload(
+            name="flange",
+            operation={
+                "type": "part",
+                "build": {"type": "cylinder", "radius": 50, "height": 15},
+                "features": [
+                    {"type": "hole", "diameter": 40, "through": True},
+                    {
+                        "type": "hole_pattern",
+                        "diameter": 8,
+                        "count": 4,
+                        "circle_diameter": 70,
+                        "through": True,
+                    },
+                ],
+            },
+        )
+    )
+    assert len(spec.operation.features) == 2
+    assert feature_summary(spec.operation) == ["hole", "hole_pattern"]

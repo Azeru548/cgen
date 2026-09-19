@@ -1,9 +1,9 @@
-"""Versioned CAD specification schema (Milestone 6).
+"""Versioned CAD specification schema (Milestone 6, extended in 3.1).
 
 Contract boundary: Groq produces JSON -> this schema validates it ->
 CadQuery builds geometry. Anything outside this schema is rejected.
 
-Schema version: 3.0 (additive over 2.0; all v2.0 specifications remain valid)
+Schema version: 3.1 (additive over 3.0; all v3.0 specifications remain valid)
 
 Build operations in v3.0 (geometry construction):
   primitives : box, cylinder, cone, sphere, torus, polygon_prism
@@ -15,6 +15,11 @@ Feature node in v3.0 (deterministic engineering features on a solid):
     fillet (all convex bbox-boundary edges, normalized |X| or |Y| edges),
     chamfer (same edge set as fillet, conical bevel),
     shell (hollow: wall thickness, top face removed)
+
+v3.1 adds ONE feature variant (MAX_FEATURES stays 4):
+    hole_pattern (N identical holes on a deterministic bolt circle in the
+    XY plane — hole i sits at angle 2π·i/count on circle_diameter,
+    centered on the part; the LLM never positions individual holes)
 
 Engineering features are STRUCTURAL, not spatial: they carry no offsets and
 no rotation. All placement remains deterministic and origin-centered — the
@@ -31,7 +36,7 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-SPEC_VERSION = "3.0"
+SPEC_VERSION = "3.1"
 
 # Hard cap per dimension so the AI cannot request absurd geometry.
 MAX_DIMENSION_MM = 10_000.0
@@ -210,6 +215,36 @@ class HoleFeature(BaseModel):
         return self
 
 
+class HolePatternFeature(BaseModel):
+    """N identical holes on a deterministic bolt circle in the XY plane.
+
+    ONE feature regardless of count: hole i (0-based) sits at angle
+    2π·i/count on a circle of `circle_diameter`, centered on the solid's
+    bounding-box center. Diameter/depth/through conventions match
+    HoleFeature. The LLM never positions individual holes; arbitrary
+    per-hole placement is deliberately out of scope.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["hole_pattern"] = "hole_pattern"
+    diameter: Dim
+    count: int = Field(ge=2, le=12)
+    circle_diameter: Dim
+    through: bool = False
+    depth: Size | None = None
+
+    @model_validator(mode="after")
+    def blind_depth_required(self) -> "HolePatternFeature":
+        if not self.through and self.depth is None:
+            raise ValueError(
+                "hole_pattern needs depth (blind) or through=true (through holes)"
+            )
+        if self.through and self.depth is not None:
+            raise ValueError("through hole_pattern must not specify depth")
+        return self
+
+
 class FilletFeature(BaseModel):
     """Round all convex bbox-boundary edges (|X| and |Y| edge directions)."""
 
@@ -243,7 +278,7 @@ class ShellFeature(BaseModel):
 
 
 Feature = Annotated[
-    Union[HoleFeature, FilletFeature, ChamferFeature, ShellFeature],
+    Union[HoleFeature, HolePatternFeature, FilletFeature, ChamferFeature, ShellFeature],
     Field(discriminator="type"),
 ]
 
@@ -305,7 +340,7 @@ BuildOperation = Annotated[
 
 
 class CADSpec(BaseModel):
-    """Top-level validated CAD specification, schema v3.0."""
+    """Top-level validated CAD specification, schema v3.1."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -374,12 +409,12 @@ def operation_node_count(op: BaseModel) -> int:
 def feature_summary(op: BaseModel) -> list[str]:
     """Engine application order for a part node's features (display/logging).
 
-    Mirrors cadquery_engine._apply_features: holes -> shell -> chamfer ->
-    fillet. Keep in sync with the engine.
+    Mirrors cadquery_engine._apply_features: holes and hole patterns ->
+    shell -> chamfer -> fillet. Keep in sync with the engine.
     """
     if not isinstance(op, PartOperation):
         return []
-    by_order = {"hole": 0, "shell": 1, "chamfer": 2, "fillet": 3}
+    by_order = {"hole": 0, "hole_pattern": 0, "shell": 1, "chamfer": 2, "fillet": 3}
     return sorted(
         (f.type for f in op.features),
         key=lambda t: by_order.get(t, 99),

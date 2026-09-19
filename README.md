@@ -6,7 +6,7 @@ deterministic CadQuery engine → validated STEP/STL + download tokens.
 ```text
 User prompt
   → Groq structured CAD spec (JSON only, never executable code)
-  → Pydantic validation (schema v2.0, allowlisted ops, tree limits)
+  → Pydantic validation (schema v3.1, allowlisted ops, tree limits)
   → CadQuery (deterministic geometry, no AI code execution)
   → STEP/STL (+ export validation, sanitized filenames, token downloads)
 ```
@@ -26,6 +26,10 @@ union         {base, tool}   result = base + tool
 cut           {base, tool}   result = base - tool
 intersect     {base, tool}   result = base ∩ tool (must overlap)
 part          {build, features[]}                  M6 engineering features
+
+One feature is a bolt-circle pattern (v3.1, still ONE feature toward the
+max-4 cap): `hole_pattern {diameter, count 2-12, circle_diameter,
+through | depth}` — N identical holes at angles 2π·i/count, deterministic.
 ```
 
 `part` wraps a built solid with deterministic features (max 4, applied by the
@@ -119,7 +123,7 @@ backend/
 ├── app/
 │   ├── main.py               # routes + HTTP mapping + OpenAPI models
 │   ├── ai/groq_client.py     # Groq: JSON-only spec, safe error mapping
-│   ├── cad/schema.py         # CADSpec v2.0 (Pydantic, strict)
+│   ├── cad/schema.py         # CADSpec v3.1 (Pydantic, strict)
 │   ├── cad/cadquery_engine.py# deterministic geometry + export validation
 │   └── services/
 │       ├── generation.py     # orchestration: timing, IDs, logging, renames

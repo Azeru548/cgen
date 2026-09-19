@@ -81,6 +81,16 @@ export interface HoleFeature {
   depth: number | null;
 }
 
+/** v3.1: N identical holes on a deterministic bolt circle (one feature). */
+export interface HolePatternFeature {
+  type: "hole_pattern";
+  diameter: number;
+  count: number;
+  circle_diameter: number;
+  through: boolean;
+  depth: number | null;
+}
+
 export interface FilletFeature {
   type: "fillet";
   radius: number;
@@ -98,6 +108,7 @@ export interface ShellFeature {
 
 export type CadFeature =
   | HoleFeature
+  | HolePatternFeature
   | FilletFeature
   | ChamferFeature
   | ShellFeature;

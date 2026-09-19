@@ -335,6 +335,63 @@ def test_generate_part_with_features_mocked(monkeypatch, tmp_path):
     assert body["files"]["step"]["filename"] == "vent_plate.step"
 
 
+def test_generate_part_with_hole_pattern_mocked(monkeypatch, tmp_path):
+    """M6.1: a hole_pattern feature flows through /generate end to end."""
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "flange",
+            "operation": {
+                "type": "part",
+                "build": {"type": "cylinder", "radius": 50, "height": 15},
+                "features": [
+                    {"type": "hole", "diameter": 40, "through": True},
+                    {
+                        "type": "hole_pattern",
+                        "diameter": 8,
+                        "count": 4,
+                        "circle_diameter": 70,
+                        "through": True,
+                    },
+                ],
+            },
+        }
+    )
+    seen = {}
+    step_path, stl_path = _write_valid_pair(tmp_path, stem="flange_part")
+
+    def fake_export(operation, name="part", out_dir=None):
+        seen["op"] = operation
+        seen["name"] = name
+        return {
+            "operation": "part",
+            "step_bytes": 456,
+            "stl_bytes": 789,
+            "step_path": step_path,
+            "stl_path": stl_path,
+        }
+
+    monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
+    monkeypatch.setattr(
+        "app.services.generation.cadquery_engine.export_operation", fake_export
+    )
+
+    r = client.post(
+        "/generate",
+        json={"prompt": "Create a 100mm diameter flange with a 40mm center hole and 4 M8 bolt holes on a 70mm circle."},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    op = body["specification"]["operation"]
+    assert op["type"] == "part"
+    assert op["build"]["type"] == "cylinder"
+    assert {f["type"] for f in op["features"]} == {"hole", "hole_pattern"}
+    assert seen["op"].build.radius == 50
+    assert seen["name"] == "flange"
+    assert body["files"]["step"]["filename"] == "flange.step"
+
+
 def test_generate_m6_new_operations_mocked(monkeypatch, tmp_path):
     """M6 primitives/composition wire through the generic export path."""
     cases = [

@@ -21,9 +21,10 @@ export const OPERATION_LABELS: Record<OperationType, string> = {
 };
 
 /** Engine feature application order (mirrors backend feature_summary).
- *  Keep in sync: holes -> shell -> chamfer -> fillet. */
+ *  Keep in sync: holes and hole patterns -> shell -> chamfer -> fillet. */
 const FEATURE_ORDER: Record<CadFeature["type"], number> = {
   hole: 0,
+  hole_pattern: 0,
   shell: 1,
   chamfer: 2,
   fillet: 3,
@@ -99,6 +100,12 @@ export function summarizeFeature(feature: CadFeature): string {
       return feature.through
         ? `Hole ⌀${formatMm(feature.diameter)} through`
         : `Hole ⌀${formatMm(feature.diameter)} × ${formatMm(feature.depth ?? 0)} deep`;
+    case "hole_pattern": {
+      const base =
+        `Hole Pattern ⌀${formatMm(feature.diameter)} · ` +
+        `${feature.count}× · ⌀${formatMm(feature.circle_diameter)} circle`;
+      return feature.through ? base : `${base} × ${formatMm(feature.depth ?? 0)} deep`;
+    }
     case "fillet":
       return `Fillet r${formatMm(feature.radius)}`;
     case "chamfer":
