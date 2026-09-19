@@ -80,19 +80,11 @@ button {
   gap: 0.65rem;
 }
 
-.brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.brand-logo {
   width: 2rem;
   height: 2rem;
   border-radius: 6px;
-  background: var(--graphite);
-  color: #fff;
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  object-fit: contain;
 }
 
 .brand-text {
@@ -858,13 +850,10 @@ button {
   pointer-events: none;
 }
 
-.boot-wordmark {
-  font-family: var(--mono);
-  font-size: 1.6rem;
-  font-weight: 700;
-  letter-spacing: 0.42em;
-  text-indent: 0.42em;
-  color: var(--ink);
+.boot-logo {
+  width: 5rem;
+  height: 5rem;
+  object-fit: contain;
 }
 
 .boot-subtitle {

@@ -10,6 +10,7 @@
  * hard cap so a slow/offline backend cannot trap the user on this screen.
  * All animation is CSS and disabled under prefers-reduced-motion.
  */
+import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { WalkingMachine } from "./WalkingMachine";
 
@@ -99,7 +100,14 @@ export function BootScreen({ checks, onDone }: BootScreenProps) {
       aria-label="CGEN initializing"
       data-testid="boot-screen"
     >
-      <div className="boot-wordmark">CGEN</div>
+      <Image
+        src="/logo-removebg.png"
+        alt="cgen"
+        width={80}
+        height={80}
+        className="boot-logo"
+        priority
+      />
       <div className="boot-subtitle">CAD GENERATION ENGINE</div>
 
       <WalkingMachine />

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BootScreen, type BootChecks } from "@/components/BootScreen";
 import { CadViewport } from "@/components/cad/CadViewport";
@@ -148,9 +149,14 @@ export default function Home() {
 
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            CG
-          </span>
+          <Image
+            src="/logo-removebg.png"
+            alt="cgen logo"
+            width={36}
+            height={36}
+            className="brand-logo"
+            priority
+          />
           <span className="brand-text">
             <strong>cgen</strong>
             <small>AI CAD generator</small>
