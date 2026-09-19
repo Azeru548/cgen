@@ -2,7 +2,7 @@
  * The CGEN walking machine — visual signature loader.
  *
  * Adapted from a UIverse walking-character concept: the SVG artwork is
- * reused but restyled (graphite body/legs, cobalt eye, CAD construction
+ * reused but restyled (graphite body/legs, orange eye, CAD construction
  * ground line instead of the cartoon splash) and re-architected into the
  * project's vanilla-CSS setup — global `.wm-*` classes in globals.css,
  * no styled-components.
@@ -102,10 +102,10 @@ export function WalkingMachine({ scale = 1 }: { scale?: number }) {
                 strokeWidth="3.5"
                 strokeLinecap="round"
               />
-              {/* Cobalt sensor eye — the restrained accent. */}
+               {/* Orange sensor eye — the restrained accent. */}
               <path
                 d="M242.49281,125.6424c0,-4.69442 3.80558,-8.5 8.5,-8.5c4.69442,0 8.5,3.80558 8.5,8.5c0,4.69442 -3.80558,8.5 -8.5,8.5c-4.69442,0 -8.5,-3.80558 -8.5,-8.5z"
-                fill="#3157ff"
+                fill="#e85d2a"
                 stroke="none"
                 strokeWidth="0.5"
                 strokeLinecap="butt"

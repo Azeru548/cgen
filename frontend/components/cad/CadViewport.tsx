@@ -49,7 +49,7 @@ export function CadViewport({
         dpr={[1, 2]}
         gl={{ antialias: true }}
       >
-        <color attach="background" args={["#f0f0eb"]} />
+        <color attach="background" args={["#171918"]} />
         <ambientLight intensity={0.85} />
         <directionalLight position={[120, 180, 90]} intensity={1.35} />
         <directionalLight position={[-100, 60, -120]} intensity={0.45} />
@@ -71,10 +71,10 @@ export function CadViewport({
             args={[10, 10]}
             cellSize={10}
             cellThickness={0.6}
-            cellColor="#d9d9d2"
+            cellColor="#3a3c38"
             sectionSize={50}
             sectionThickness={1}
-            sectionColor="#b9b9ae"
+            sectionColor="#4a4c46"
             fadeDistance={1400}
             fadeStrength={2}
             infiniteGrid
@@ -90,7 +90,7 @@ export function CadViewport({
         <GizmoHelper alignment="top-right" margin={[56, 56]}>
           <GizmoViewport
             axisColors={["#c0392b", "#198754", "#3157ff"]}
-            labelColor="#171816"
+            labelColor="#faf9f5"
           />
         </GizmoHelper>
       </Canvas>
@@ -118,7 +118,7 @@ export function CadViewport({
         <div className="viewport-overlay" data-testid="empty-state">
           <p className="overlay-title">Your CAD model will appear here</p>
           <p className="overlay-text">
-            Describe a part on the right to generate your first model.
+            Describe a part below to generate your first model.
           </p>
           <ul className="overlay-examples">
             {EXAMPLE_PROMPTS.map((prompt) => (
