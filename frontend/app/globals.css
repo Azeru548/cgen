@@ -2,8 +2,6 @@
    Bone/graphite palette, orange signal accent, IBM Plex typography.
    Vanilla CSS, no frameworks. */
 
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap");
-
 :root {
   --bg: #f2f0ea;
   --surface: #faf9f5;
