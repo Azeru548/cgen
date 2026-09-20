@@ -1,9 +1,9 @@
-"""Versioned CAD specification schema (Milestone 6, extended in 3.1).
+"""Versioned CAD specification schema (Milestone 6, extended in 3.2).
 
 Contract boundary: Groq produces JSON -> this schema validates it ->
 CadQuery builds geometry. Anything outside this schema is rejected.
 
-Schema version: 3.1 (additive over 3.0; all v3.0 specifications remain valid)
+Schema version: 3.2 (additive over 3.1; all v3.1 specifications remain valid)
 
 Build operations in v3.0 (geometry construction):
   primitives : box, cylinder, cone, sphere, torus, polygon_prism
@@ -21,6 +21,15 @@ v3.1 adds ONE feature variant (MAX_FEATURES stays 4):
     XY plane — hole i sits at angle 2π·i/count on circle_diameter,
     centered on the part; the LLM never positions individual holes)
 
+v3.2 adds ONE more feature variant (MAX_FEATURES stays 4):
+    hole_grid (rows×cols identical holes on a deterministic centered
+    rectangular array in the XY plane — position (i, j) sits at
+    x = (i-(cols-1)/2)*spacing_x, y = (j-(rows-1)/2)*spacing_y, centered
+    on the part; rows=1 or cols=1 gives a straight line of holes; the LLM
+    never positions individual holes, it only gives center-to-center
+    spacings. This covers corner/rectangular/linear multi-hole layouts
+    that a bolt circle cannot represent on non-square faces.)
+
 Engineering features are STRUCTURAL, not spatial: they carry no offsets and
 no rotation. All placement remains deterministic and origin-centered — the
 LLM never computes positions (that extension is deliberately out of M6; it
@@ -36,7 +45,7 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-SPEC_VERSION = "3.1"
+SPEC_VERSION = "3.2"
 
 # Hard cap per dimension so the AI cannot request absurd geometry.
 MAX_DIMENSION_MM = 10_000.0
@@ -245,6 +254,52 @@ class HolePatternFeature(BaseModel):
         return self
 
 
+class HoleGridFeature(BaseModel):
+    """rows×cols identical holes on a deterministic centered rectangular array.
+
+    ONE feature regardless of hole count: position (i, j), 0-based, sits at
+    x = (i-(cols-1)/2)*spacing_x, y = (j-(rows-1)/2)*spacing_y in the XY
+    plane, centered on the solid's bounding-box center. spacing_x/spacing_y
+    are CENTER-TO-CENTER distances between adjacent holes (not edge
+    distances): holes 10mm from the edges of a 120×80 plate use
+    spacing_x=100, spacing_y=60. rows=1 or cols=1 yields a straight line of
+    holes along one axis. Diameter/depth/through conventions match
+    HoleFeature. At most 12 holes per grid (same bound as hole_pattern
+    count), so cutter count stays small. The LLM never positions individual
+    holes; arbitrary per-hole coordinates are deliberately out of scope.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["hole_grid"] = "hole_grid"
+    diameter: Dim
+    rows: int = Field(ge=1, le=12)
+    cols: int = Field(ge=1, le=12)
+    spacing_x: Dim
+    spacing_y: Dim
+    through: bool = False
+    depth: Size | None = None
+
+    @model_validator(mode="after")
+    def blind_depth_required(self) -> "HoleGridFeature":
+        if not self.through and self.depth is None:
+            raise ValueError(
+                "hole_grid needs depth (blind) or through=true (through holes)"
+            )
+        if self.through and self.depth is not None:
+            raise ValueError("through hole_grid must not specify depth")
+        return self
+
+    @model_validator(mode="after")
+    def hole_count_bounded(self) -> "HoleGridFeature":
+        if self.rows * self.cols > 12:
+            raise ValueError(
+                f"hole_grid has too many holes ({self.rows * self.cols} > 12). "
+                "Split the request or use fewer holes."
+            )
+        return self
+
+
 class FilletFeature(BaseModel):
     """Round all convex bbox-boundary edges (|X| and |Y| edge directions)."""
 
@@ -278,7 +333,7 @@ class ShellFeature(BaseModel):
 
 
 Feature = Annotated[
-    Union[HoleFeature, HolePatternFeature, FilletFeature, ChamferFeature, ShellFeature],
+    Union[HoleFeature, HolePatternFeature, HoleGridFeature, FilletFeature, ChamferFeature, ShellFeature],
     Field(discriminator="type"),
 ]
 
@@ -340,7 +395,7 @@ BuildOperation = Annotated[
 
 
 class CADSpec(BaseModel):
-    """Top-level validated CAD specification, schema v3.1."""
+    """Top-level validated CAD specification, schema v3.2."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -409,12 +464,12 @@ def operation_node_count(op: BaseModel) -> int:
 def feature_summary(op: BaseModel) -> list[str]:
     """Engine application order for a part node's features (display/logging).
 
-    Mirrors cadquery_engine._apply_features: holes and hole patterns ->
-    shell -> chamfer -> fillet. Keep in sync with the engine.
+    Mirrors cadquery_engine._apply_features: holes, hole patterns and hole
+    grids -> shell -> chamfer -> fillet. Keep in sync with the engine.
     """
     if not isinstance(op, PartOperation):
         return []
-    by_order = {"hole": 0, "hole_pattern": 0, "shell": 1, "chamfer": 2, "fillet": 3}
+    by_order = {"hole": 0, "hole_pattern": 0, "hole_grid": 0, "shell": 1, "chamfer": 2, "fillet": 3}
     return sorted(
         (f.type for f in op.features),
         key=lambda t: by_order.get(t, 99),

@@ -214,6 +214,26 @@ describe("summarizeFeature", () => {
         through: false,
         depth: 10,
       },
+      {
+        type: "hole_grid",
+        diameter: 8,
+        rows: 2,
+        cols: 2,
+        spacing_x: 100,
+        spacing_y: 60,
+        through: true,
+        depth: null,
+      },
+      {
+        type: "hole_grid",
+        diameter: 6,
+        rows: 1,
+        cols: 3,
+        spacing_x: 40,
+        spacing_y: 40,
+        through: false,
+        depth: 5,
+      },
       { type: "fillet", radius: 2 },
       { type: "chamfer", size: 1.5 },
       { type: "shell", thickness: 3 },
@@ -223,6 +243,8 @@ describe("summarizeFeature", () => {
       "Hole ⌀8 × 12 deep",
       "Hole Pattern ⌀8 · 4× · ⌀60 circle",
       "Hole Pattern ⌀8 · 6× · ⌀80 circle × 10 deep",
+      "Hole Grid ⌀8 · 2×2 · 100×60 pitch",
+      "Hole Grid ⌀6 · 1×3 · 40×40 pitch × 5 deep",
       "Fillet r2",
       "Chamfer 1.5",
       "Wall 3",
@@ -240,6 +262,28 @@ describe("summarizeFeature", () => {
       "hole",
       "shell",
       "chamfer",
+      "fillet",
+    ]);
+  });
+
+  it("places hole_grid at the same index as hole", () => {
+    const sorted = sortFeatures([
+      { type: "fillet", radius: 2 },
+      {
+        type: "hole_grid",
+        diameter: 8,
+        rows: 2,
+        cols: 2,
+        spacing_x: 100,
+        spacing_y: 60,
+        through: true,
+        depth: null,
+      },
+      { type: "shell", thickness: 2 },
+    ]);
+    expect(sorted.map((f) => f.type)).toEqual([
+      "hole_grid",
+      "shell",
       "fillet",
     ]);
   });

@@ -1,4 +1,4 @@
-/** Strict TypeScript mirrors of the cgen backend contract (schema v3.0, M6).
+/** Strict TypeScript mirrors of the cgen backend contract (schema v3.2).
  *  The frontend never reconstructs CAD geometry from these types —
  *  the specification is display/debug information only.
  *  No `any` anywhere in this file.
@@ -106,9 +106,22 @@ export interface ShellFeature {
   thickness: number;
 }
 
+/** v3.2: rows×cols identical holes on a deterministic centered grid. */
+export interface HoleGridFeature {
+  type: "hole_grid";
+  diameter: number;
+  rows: number;
+  cols: number;
+  spacing_x: number;
+  spacing_y: number;
+  through: boolean;
+  depth: number | null;
+}
+
 export type CadFeature =
   | HoleFeature
   | HolePatternFeature
+  | HoleGridFeature
   | FilletFeature
   | ChamferFeature
   | ShellFeature;

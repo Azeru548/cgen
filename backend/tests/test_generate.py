@@ -1170,3 +1170,97 @@ def test_modify_invalid_spec_from_model_is_422(monkeypatch):
         json={"specification": BOX_SPEC, "instruction": "Make it taller"},
     )
     assert r.status_code == 422, r.text
+
+
+# --- Schema v3.2: hole_grid prompt routing + end-to-end ------------------------
+
+
+def test_groq_routes_rectangular_holes_to_grid(monkeypatch):
+    """v3.2: the system prompt steers corner/rectangular/linear multi-hole
+    layouts to ONE hole_grid — never to hole_pattern or several holes."""
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    grid_json = (
+        '{"document_type": "3d_part", "units": "mm", "name": "corner_plate", '
+        '"operation": {"type": "part", '
+        '"build": {"type": "box", "width": 120, "depth": 80, "height": 10}, '
+        '"features": [{"type": "hole_grid", "diameter": 8, "rows": 2, "cols": 2, '
+        '"spacing_x": 100, "spacing_y": 60, "through": true}]}}'
+    )
+    captured = {}
+    monkeypatch.setattr(
+        groq_client, "_get_client", lambda key: make_fake_client(grid_json, captured)
+    )
+    spec = groq_client.parse_prompt_to_spec(
+        "Create a 120x80x10mm plate with four 8mm holes near the corners."
+    )
+    assert spec.operation.features[0].type == "hole_grid"
+    system_text = captured["messages"][0]["content"]
+    for required in (
+        "hole_grid",
+        "spacing_x",
+        "CENTER-TO-CENTER",
+        "near each corner",
+        "Routing",
+        "NEVER emit several",
+    ):
+        assert required in system_text
+
+
+def test_generate_part_with_hole_grid_mocked(monkeypatch, tmp_path):
+    """v3.2: live repro 1 geometry (120x80 plate, 2x2 corner grid) flows
+    through /generate end to end instead of failing bolt-circle validation."""
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "corner_plate",
+            "operation": {
+                "type": "part",
+                "build": {"type": "box", "width": 120, "depth": 80, "height": 10},
+                "features": [
+                    {
+                        "type": "hole_grid",
+                        "diameter": 8,
+                        "rows": 2,
+                        "cols": 2,
+                        "spacing_x": 100,
+                        "spacing_y": 60,
+                        "through": True,
+                    },
+                ],
+            },
+        }
+    )
+    seen = {}
+    step_path, stl_path = _write_valid_pair(tmp_path, stem="corner_plate_part")
+
+    def fake_export(operation, name="part", out_dir=None):
+        seen["op"] = operation
+        seen["name"] = name
+        return {
+            "operation": "part",
+            "step_bytes": 321,
+            "stl_bytes": 654,
+            "step_path": step_path,
+            "stl_path": stl_path,
+        }
+
+    monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
+    monkeypatch.setattr(
+        "app.services.generation.cadquery_engine.export_operation", fake_export
+    )
+
+    r = client.post(
+        "/generate",
+        json={"prompt": "Create a 120x80x10mm plate with four 8mm through-holes near the corners."},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    op = body["specification"]["operation"]
+    assert op["type"] == "part"
+    grid = op["features"][0]
+    assert grid["type"] == "hole_grid"
+    assert (grid["rows"], grid["cols"]) == (2, 2)
+    assert (grid["spacing_x"], grid["spacing_y"]) == (100, 60)
+    assert seen["name"] == "corner_plate"
+    assert body["files"]["step"]["filename"] == "corner_plate.step"

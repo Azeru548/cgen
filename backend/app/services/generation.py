@@ -201,15 +201,70 @@ class ModificationRejectedError(ValueError):
     """Diff guard rejected the modification as unrelated to the instruction."""
 
 
+def _structure_signature(op: object) -> object:
+    """Numeric-agnostic skeleton of an operation tree.
+
+    Same node types in the same shape (plus polygon side count, which is
+    topological) produce equal signatures. Numeric dimensions, booleans
+    (e.g. cylinder `through`), and blind-hole depths are tunable parameters
+    and are deliberately excluded. Part features are excluded here — they
+    are checked separately by _feature_type_counts so that adding a new
+    feature is allowed while removing/replacing one is not.
+    """
+    node_type = getattr(op, "type", None)
+    if node_type in ("union", "cut", "intersect"):
+        return (
+            node_type,
+            _structure_signature(op.base),
+            _structure_signature(op.tool),
+        )
+    if node_type == "part":
+        return (node_type, _structure_signature(op.build))
+    if node_type == "polygon_prism":
+        return (node_type, op.sides)
+    return (node_type,)
+
+
+def _skeletons_compatible(old_op: object, new_op: object) -> bool:
+    """True when the new tree keeps the old skeleton.
+
+    Identical skeletons are compatible. The single exception is promotion
+    of a bare solid to a part node with the SAME build geometry (e.g.
+    box -> part(box + hole)), which is how a first feature gets added to
+    a featureless solid. Every other shape change — top-level type swap,
+    build-tree rebuild, primitive swap — is a redesign, not a modification.
+    """
+    old_sig = _structure_signature(old_op)
+    new_sig = _structure_signature(new_op)
+    if old_sig == new_sig:
+        return True
+    if getattr(old_op, "type", None) != "part" and getattr(new_op, "type", None) == "part":
+        return _structure_signature(old_op) == _structure_signature(new_op.build)
+    return False
+
+
+def _feature_type_counts(op: object) -> dict[str, int]:
+    """Multiset of feature types on an operation (empty for non-part ops)."""
+    from collections import Counter
+
+    feats = getattr(op, "features", None)
+    if not feats:
+        return dict(Counter())
+    return dict(Counter(f.type for f in feats))
+
+
 def _diff_specs(old: CADSpec, new: CADSpec) -> dict[str, bool]:
     """Structural comparison of two CADSpecs.
 
     Returns a dict of changed field categories:
     - "constants": document_type or units changed (always rejected)
     - "name": part name changed
-    - "operation_structure": operation type changed (e.g. box -> cylinder)
+    - "operation_structure": operation skeleton changed, i.e. a redesign
+      such as box -> cylinder, part -> union, or a build-tree rebuild
+      (always rejected, except bare-solid -> part promotion with the
+      same build geometry)
     - "operation_dimensions": numeric values changed within same structure
-    - "features": feature list changed (added/removed/reordered)
+    - "features": feature multiset changed (added/removed/replaced)
     """
     changes: dict[str, bool] = {
         "constants": False,
@@ -225,21 +280,7 @@ def _diff_specs(old: CADSpec, new: CADSpec) -> dict[str, bool]:
     if old.name != new.name:
         changes["name"] = True
 
-    def _op_structure_key(op: object) -> str:
-        """Deterministic string key encoding operation type and tree shape."""
-        if isinstance(op, BoxOperation):
-            return "box"
-        if hasattr(op, "type"):
-            return str(op.type)
-        return str(type(op).__name__)
-
-    def _op_depth_key(op: object) -> int:
-        from ..cad.schema import operation_depth
-        return operation_depth(op)
-
-    old_type = _op_structure_key(old.operation)
-    new_type = _op_structure_key(new.operation)
-    if old_type != new_type:
+    if not _skeletons_compatible(old.operation, new.operation):
         changes["operation_structure"] = True
 
     old_json = json.dumps(old.model_dump(), sort_keys=True)
@@ -247,21 +288,21 @@ def _diff_specs(old: CADSpec, new: CADSpec) -> dict[str, bool]:
     if old_json != new_json and not changes["operation_structure"]:
         changes["operation_dimensions"] = True
 
-    old_has_features = hasattr(old.operation, "features")
-    new_has_features = hasattr(new.operation, "features")
-    if old_has_features != new_has_features:
+    if _feature_type_counts(old.operation) != _feature_type_counts(new.operation):
         changes["features"] = True
-    elif old_has_features and new_has_features:
-        old_feats = [f.type for f in old.operation.features]
-        new_feats = [f.type for f in new.operation.features]
-        if old_feats != new_feats:
-            changes["features"] = True
 
     return changes
 
 
 def validate_modification(old: CADSpec, new: CADSpec, instruction: str) -> None:
     """Diff guard: reject modifications that change unrelated fields.
+
+    Allowed: numeric parameter retunes within the same operation skeleton
+    (dimensions, diameters, counts, depths, thicknesses) and ADDING new
+    features to a part. Rejected: constants drift, unexpected renames,
+    operation-skeleton redesigns (e.g. part -> union, box -> cylinder,
+    swapping a build primitive for an unrelated one such as a sphere),
+    and REMOVING or REPLACING existing features (e.g. dropping a hole).
 
     Raises ModificationRejectedError if the modification is suspicious.
     Deterministic, no LLM involved.
@@ -282,6 +323,23 @@ def validate_modification(old: CADSpec, new: CADSpec, instruction: str) -> None:
         raise ModificationRejectedError(
             "Modification changed the part name without an explicit rename request."
         )
+
+    if changes["operation_structure"]:
+        raise ModificationRejectedError(
+            "Modification changes the operation structure (redesign). "
+            "Only dimension/feature parameter changes within the same "
+            "shape are allowed; generate a new part for a different design."
+        )
+
+    old_counts = _feature_type_counts(old.operation)
+    new_counts = _feature_type_counts(new.operation)
+    for ftype, needed in old_counts.items():
+        if new_counts.get(ftype, 0) < needed:
+            raise ModificationRejectedError(
+                f"Modification removes or replaces the existing '{ftype}' "
+                f"feature. Existing features must be kept; only their "
+                f"parameters may change."
+            )
 
     something_changed = any(changes.values())
     if not something_changed:

@@ -6,6 +6,8 @@ Milestone 4: + production-grade generation API (clean contract, file store,
 Milestone 6: + schema v3.0 (torus, polygon_prism, intersect, part features:
   hole/fillet/chamfer/shell) with unchanged API contracts.
   Schema v3.1 adds the hole_pattern feature (bolt-circle holes); contracts unchanged.
+  Schema v3.2 adds the hole_grid feature (rectangular/linear hole arrays);
+  contracts unchanged.
 Milestone 7: + POST /modify (natural-language modification of existing specs
   with structural diff guard).
 
@@ -108,7 +110,7 @@ class FileMetadata(BaseModel):
 class GenerateResponse(BaseModel):
     status: Literal["completed"] = Field(description="Always 'completed' on success.")
     request_id: str = Field(description="Random ID for this request; see server logs.")
-    specification: dict = Field(description="Validated CAD specification (schema v3.1).")
+    specification: dict = Field(description="Validated CAD specification (schema v3.2).")
     units: str = Field(description="Length unit used throughout: mm.")
     generation_time_ms: int = Field(description="Total backend generation time.")
     files: dict[str, FileMetadata] = Field(

@@ -725,3 +725,84 @@ def test_flange_central_hole_plus_pattern_within_cap():
     )
     assert len(spec.operation.features) == 2
     assert feature_summary(spec.operation) == ["hole", "hole_pattern"]
+
+
+# --- Schema v3.2: hole_grid ---------------------------------------------------
+
+
+def grid_payload(rows=2, cols=2, **overrides):
+    feature = {
+        "type": "hole_grid",
+        "diameter": 8,
+        "rows": rows,
+        "cols": cols,
+        "spacing_x": 40,
+        "spacing_y": 20,
+        "through": True,
+    }
+    feature.update(overrides)
+    return plate_payload([feature])
+
+
+def test_valid_hole_grid_two_by_two():
+    spec = CADSpec.model_validate(grid_payload(2, 2))
+    feat = spec.operation.features[0]
+    assert feat.type == "hole_grid"
+    assert (feat.rows, feat.cols) == (2, 2)
+    assert (feat.spacing_x, feat.spacing_y) == (40, 20)
+
+
+def test_valid_hole_grid_linear_row():
+    # rows=1 yields a straight line of holes along one axis.
+    spec = CADSpec.model_validate(grid_payload(1, 2))
+    assert spec.operation.features[0].rows == 1
+    assert spec.operation.features[0].cols == 2
+
+
+def test_hole_grid_row_col_bounds_rejected():
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(grid_payload(0, 2))
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(grid_payload(2, 13))
+
+
+def test_hole_grid_total_hole_cap_rejected():
+    # 4x4 = 16 holes exceeds the per-feature bound of 12.
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(grid_payload(4, 4))
+
+
+def test_hole_grid_through_depth_rules():
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(grid_payload(2, 2, depth=12))
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(grid_payload(2, 2, through=False, depth=None))
+    # Blind grid with depth is valid.
+    spec = CADSpec.model_validate(grid_payload(2, 2, through=False, depth=6))
+    assert spec.operation.features[0].depth == 6
+
+
+def test_hole_grid_unknown_fields_rejected():
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(grid_payload(2, 2, position=[10, 0]))
+
+
+def test_plate_central_hole_plus_grid_within_cap():
+    spec = CADSpec.model_validate(
+        plate_payload(
+            [
+                {"type": "hole", "diameter": 8, "through": True},
+                {
+                    "type": "hole_grid",
+                    "diameter": 6,
+                    "rows": 1,
+                    "cols": 2,
+                    "spacing_x": 60,
+                    "spacing_y": 20,
+                    "through": True,
+                },
+            ]
+        )
+    )
+    assert len(spec.operation.features) == 2
+    assert feature_summary(spec.operation) == ["hole", "hole_grid"]

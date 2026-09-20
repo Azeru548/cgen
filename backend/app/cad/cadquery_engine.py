@@ -28,9 +28,14 @@ robustly — see _apply_features):
                  rule as the legacy through-cylinder cut); concentric holes
                  are applied largest-first (counterbore pattern); blind
                  holes drill from the top (+Z) face down `depth`.
-                 hole_pattern cuts N identical holes on a deterministic bolt
-                 circle (hole i at angle 2π·i/count on circle_diameter,
-                 XY-centered); fit/overlap is validated before cutting.
+                  hole_pattern cuts N identical holes on a deterministic bolt
+                  circle (hole i at angle 2π·i/count on circle_diameter,
+                  XY-centered); fit/overlap is validated before cutting.
+                  hole_grid cuts rows×cols identical holes on a deterministic
+                  centered rectangular array (position (i,j) at
+                  x=(i-(cols-1)/2)*spacing_x, y=(j-(rows-1)/2)*spacing_y);
+                  rows=1 or cols=1 gives a straight line; extents/spacing/
+                  center-overlap are validated before cutting.
   2. shell    — hollow the solid with a uniform wall, top (+Z) face open.
   3. chamfer  — all convex bbox-boundary edges parallel to X or Y, 45° bevel.
   4. fillet   — same deterministic edge set as chamfer, rounded.
@@ -56,6 +61,7 @@ from .schema import (
     CylinderOperation,
     FilletFeature,
     HoleFeature,
+    HoleGridFeature,
     HolePatternFeature,
     IntersectOperation,
     PartOperation,
@@ -333,6 +339,78 @@ def _apply_hole_pattern(solid, feature: HolePatternFeature, other_hole_radii: li
     return solid
 
 
+def _grid_positions(feature: HoleGridFeature) -> list[tuple[float, float]]:
+    """Deterministic (x, y) centers for a hole_grid, XY-centered on origin."""
+    return [
+        (
+            (i - (feature.cols - 1) / 2) * feature.spacing_x,
+            (j - (feature.rows - 1) / 2) * feature.spacing_y,
+        )
+        for j in range(feature.rows)
+        for i in range(feature.cols)
+    ]
+
+
+def _validate_hole_grid(solid, feature: HoleGridFeature, other_hole_radii: list) -> None:
+    """Reject hole grids that cannot work, before cutting anything.
+
+    Deterministic checks against the solid's bounding box:
+      - the outermost hole edges fit inside the XY half-extents;
+      - adjacent holes do not overlap (each spacing >= one diameter);
+      - no grid hole overlaps another centered hole.
+    Rejections use ValueError so they surface as 422.
+    """
+    bbox = solid.BoundingBox()
+    hx = (bbox.xmax - bbox.xmin) / 2
+    hy = (bbox.ymax - bbox.ymin) / 2
+    hole_radius = feature.diameter / 2
+    extent_x = ((feature.cols - 1) / 2) * feature.spacing_x + hole_radius
+    extent_y = ((feature.rows - 1) / 2) * feature.spacing_y + hole_radius
+    if extent_x > hx + _PATTERN_FIT_TOL_MM or extent_y > hy + _PATTERN_FIT_TOL_MM:
+        raise ValueError(
+            "hole_grid does not fit: the outermost holes extend past the part face"
+        )
+    if feature.cols > 1 and feature.spacing_x < 2 * hole_radius - _PATTERN_FIT_TOL_MM:
+        raise ValueError(
+            "hole_grid holes overlap each other: increase spacing_x, "
+            "use smaller holes, or use fewer columns"
+        )
+    if feature.rows > 1 and feature.spacing_y < 2 * hole_radius - _PATTERN_FIT_TOL_MM:
+        raise ValueError(
+            "hole_grid holes overlap each other: increase spacing_y, "
+            "use smaller holes, or use fewer rows"
+        )
+    for x, y in _grid_positions(feature):
+        dist = math.hypot(x, y)
+        for center_radius in other_hole_radii:
+            if dist < center_radius + hole_radius - _PATTERN_FIT_TOL_MM:
+                raise ValueError(
+                    "hole_grid overlaps the central hole: increase the spacings "
+                    "or use smaller holes"
+                )
+
+
+def _apply_hole_grid(solid, feature: HoleGridFeature, other_hole_radii: list):
+    """Cut rows×cols identical holes on the deterministic centered grid.
+
+    Same cutter-reuse discipline as _apply_hole_pattern: the tool is built
+    once from the pre-cut solid and translated in XY only. Through/blind
+    behavior matches _cut_hole exactly.
+    """
+    cq = _require_cq()
+    assert feature.depth is not None or feature.through  # guaranteed by schema
+    _validate_hole_grid(solid, feature, other_hole_radii)
+    hole_radius = feature.diameter / 2
+    if feature.through:
+        tool = _through_tool_at(cq, solid, hole_radius)
+    else:
+        assert feature.depth is not None
+        tool = _blind_tool_at(cq, solid, hole_radius, feature.depth)
+    for dx, dy in _grid_positions(feature):
+        solid = cut(solid, tool.translate(cq.Vector(dx, dy, 0)))
+    return solid
+
+
 def _is_axis_aligned_to_xy(edge, tol: float = 1e-6) -> bool:
     """True when a straight edge runs parallel to the X or Y axis."""
     vertices = edge.Vertices()
@@ -451,6 +529,9 @@ def _apply_features(solid, features: list):
     for feature in features:
         if isinstance(feature, HolePatternFeature):
             solid = _apply_hole_pattern(solid, feature, center_radii)
+    for feature in features:
+        if isinstance(feature, HoleGridFeature):
+            solid = _apply_hole_grid(solid, feature, center_radii)
     for feature in features:
         if isinstance(feature, ShellFeature):
             solid = _apply_shell(solid, feature.thickness)

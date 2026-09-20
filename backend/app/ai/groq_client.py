@@ -88,12 +88,29 @@ positions:
   {"type": "hole_pattern", "diameter": 8, "count": 4, "circle_diameter": 60,
    "through": true}; blind variant takes "depth" instead of "through".
   "count" is 2-12. "circle_diameter" is the bolt-circle diameter (center to
-  opposite hole centers), NOT the part diameter. Rule of thumb:
-  one centered hole -> "hole"; "four 8mm holes equally spaced around a 60mm
-  bolt circle" / "6 holes on a 50mm bolt circle" / "three 5mm holes equally
-  spaced around the center" -> ONE "hole_pattern". At most 4 features total
-  per part (e.g. central hole + hole_pattern = 2 features). NEVER emit
-  several "hole" features for a bolt circle, and NEVER compute positions.
+  opposite hole centers), NOT the part diameter. Use ONLY for genuinely
+  circular layouts ("bolt circle", "equally spaced around the center",
+  "flange bolt holes"): the whole circle must fit on the face, so NEVER use
+  it for corner/rectangular/linear hole layouts on non-square faces.
+- hole_grid (DIAMETERS, ONE feature no matter the count): two or more
+  identical holes in a centered rectangular rows×cols array, e.g.
+  {"type": "hole_grid", "diameter": 8, "rows": 2, "cols": 2,
+   "spacing_x": 100, "spacing_y": 60, "through": true}; blind variant takes
+  "depth" instead of "through". "rows"/"cols" are 1-12 with rows*cols <= 12;
+  rows=1 or cols=1 gives a straight line of holes along one axis.
+  "spacing_x"/"spacing_y" are CENTER-TO-CENTER distances between adjacent
+  holes, NOT edge distances: holes 10mm from the edges of a 120×80 plate sit
+  100mm apart in X and 60mm apart in Y, so spacing_x=100, spacing_y=60.
+  The array is always centered on the part — you NEVER give coordinates.
+Routing — pick exactly ONE hole representation, never combine guesses:
+  one centered hole -> "hole";
+  "bolt circle" / "equally spaced around the center" / circular flange
+  holes -> ONE "hole_pattern";
+  "near each corner" / "in rows" / "at coordinates" / symmetric along one
+  axis / any rectangular or straight-line layout -> ONE "hole_grid".
+  At most 4 features total per part (e.g. central hole + hole_grid =
+  2 features). NEVER emit several "hole" features (they would all drill the
+  same centered hole), and NEVER compute positions.
 - fillet: {"type": "fillet", "radius": 2}
 - chamfer: {"type": "chamfer", "size": 2}
 - shell (hollow with a wall, top face open):
@@ -335,21 +352,33 @@ Rules you MUST follow:
 - Return JSON ONLY. No markdown, no explanation, no comments, no code fences.
 - NEVER return Python code, CadQuery code, or any executable code.
 - Preserve the document_type, units, and name fields unless the instruction explicitly asks to rename.
-- Only change fields that are directly relevant to the instruction. Do NOT modify unrelated fields.
+- Only change numeric fields that are directly relevant to the instruction. Do NOT modify unrelated fields.
+- STRUCTURAL PRESERVATION (enforced by a deterministic validator — redesigns are rejected):
+  - Keep the EXACT same operation tree: same top-level type, same nested
+    composition shape, same build primitives. Only numeric values may change.
+  - NEVER swap one primitive for another (no box -> cylinder, no hole -> sphere).
+  - NEVER remove or replace an existing feature. A hole stays a hole; only its
+    diameter/depth/through/count parameters may change.
+  - You MAY add a NEW feature to a part (e.g. add a fillet), and you MAY wrap
+    a bare solid in a "part" node to attach its first feature — the build
+    geometry itself must stay identical.
+  - A request that needs a different shape (e.g. "replace the hole with a
+    sphere", "make it a cylinder instead of a box") is a NEW part, not a
+    modification: return the current specification UNCHANGED so the validator
+    reports no change.
 - Keep all the same operation types: "box", "cylinder", "cone", "sphere", "torus", "polygon_prism", "union", "cut", "intersect", "part".
 - Do NOT invent new operation types.
 - Convert ALL dimensions to millimeters (mm) if not already.
 - Every dimension must be > 0 and <= 10000.
 - Keep nesting shallow: at most 4 levels, at most 15 operations total.
-- Features: "hole", "hole_pattern", "fillet", "chamfer", "shell" — same rules as generation.
+- Features: "hole", "hole_pattern", "hole_grid", "fillet", "chamfer", "shell" — same rules as generation.
 - At most 4 features per part node.
 
 Examples of valid modifications:
 - "make it 50mm taller" → increase the height dimension by 50
-- "add a 10mm through hole" → add a part node with hole feature or modify existing
+- "add a 10mm through hole" → wrap the solid in a part node with a hole feature, or add to existing features
 - "change the hole diameter to 12mm" → update the diameter on the existing hole
-- "round the edges with 2mm fillet" → add fillet feature
-- "make it a cylinder instead of a box" → change the operation type (rebuild tree)
+- "round the edges with 2mm fillet" → add fillet feature alongside existing features
 
 Return EXACTLY the full modified specification as JSON:
 {"document_type": "3d_part", "units": "mm", "name": "...", "operation": {...}}

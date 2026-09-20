@@ -580,3 +580,137 @@ def valid_torus_spec(*, major: float, minor: float):
             },
         }
     )
+
+
+# --- Schema v3.2: hole_grid ----------------------------------------------------
+
+
+def build_grid_part(*, rows=2, cols=2, plate_width=120, plate_depth=80,
+                    plate_height=10, diameter=8, spacing_x=100, spacing_y=60,
+                    **overrides):
+    feature = {
+        "type": "hole_grid",
+        "diameter": diameter,
+        "rows": rows,
+        "cols": cols,
+        "spacing_x": spacing_x,
+        "spacing_y": spacing_y,
+        "through": True,
+        "depth": None,
+    }
+    feature.update(overrides)
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "corner_plate",
+            "operation": {
+                "type": "part",
+                "build": {"type": "box", "width": plate_width, "depth": plate_depth, "height": plate_height},
+                "features": [feature],
+            },
+        }
+    )
+    return cadquery_engine.build_operation(spec.operation)
+
+
+def test_grid_two_by_two_corner_holes_volume():
+    """Live repro 1: 120x80x10 plate, four corner 8mm holes 10mm from edges."""
+    need_cq()
+    solid = build_grid_part()
+    hole_vol = 4 * math.pi * 16 * 10
+    expected = 120 * 80 * 10 - hole_vol
+    assert solid.Volume() == pytest.approx(expected, rel=1e-4)
+
+
+def test_grid_linear_two_holes_volume():
+    """Live repro 3: two 8mm holes symmetric along the plate length."""
+    need_cq()
+    solid = build_grid_part(rows=1, cols=2, spacing_x=80, spacing_y=10)
+    hole_vol = 2 * math.pi * 16 * 10
+    expected = 120 * 80 * 10 - hole_vol
+    assert solid.Volume() == pytest.approx(expected, rel=1e-4)
+
+
+def test_grid_blind_holes_volume():
+    need_cq()
+    solid = build_grid_part(through=False, depth=6)
+    hole_vol = 4 * math.pi * 16 * 6
+    expected = 120 * 80 * 10 - hole_vol
+    assert solid.Volume() == pytest.approx(expected, rel=1e-4)
+
+
+def test_grid_oversize_extents_rejected():
+    """The grid must fit on the face — no silent invalid geometry."""
+    need_cq()
+    with pytest.raises(ValueError, match="hole_grid does not fit"):
+        build_grid_part(spacing_x=200, spacing_y=60)
+
+
+def test_grid_overlapping_spacing_rejected():
+    need_cq()
+    with pytest.raises(ValueError, match="hole_grid holes overlap"):
+        build_grid_part(spacing_x=4, spacing_y=60)
+
+
+def test_grid_overlapping_central_hole_rejected():
+    need_cq()
+    from app.cad.schema import CADSpec as _S
+
+    spec = _S.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "plate",
+            "operation": {
+                "type": "part",
+                "build": {"type": "box", "width": 120, "depth": 80, "height": 10},
+                "features": [
+                    {"type": "hole", "diameter": 40, "through": True},
+                    {
+                        "type": "hole_grid",
+                        "diameter": 8,
+                        "rows": 1,
+                        "cols": 2,
+                        "spacing_x": 20,
+                        "spacing_y": 20,
+                        "through": True,
+                    },
+                ],
+            },
+        }
+    )
+    with pytest.raises(ValueError, match="hole_grid overlaps the central hole"):
+        cadquery_engine.build_operation(spec.operation)
+
+
+def test_grid_export():
+    need_cq()
+    from app.cad.schema import CADSpec as _S
+
+    spec = _S.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "corner_plate",
+            "operation": {
+                "type": "part",
+                "build": {"type": "box", "width": 120, "depth": 80, "height": 10},
+                "features": [
+                    {
+                        "type": "hole_grid",
+                        "diameter": 8,
+                        "rows": 2,
+                        "cols": 2,
+                        "spacing_x": 100,
+                        "spacing_y": 60,
+                        "through": True,
+                    },
+                ],
+            },
+        }
+    )
+    result = cadquery_engine.export_operation(spec.operation, name=spec.name)
+    assert result["operation"] == "part"
+    assert result["step_bytes"] > 0
+    assert result["stl_bytes"] > 0

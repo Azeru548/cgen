@@ -30,7 +30,7 @@ import type { Project } from "@/types/revisions";
 type PageStatus = "idle" | "generating" | "ready" | "error";
 type EngineState = "ready" | "processing" | "error" | "unknown";
 
-const SCHEMA_VERSION = "M6 · SCHEMA 3.1";
+const SCHEMA_VERSION = "SCHEMA 3.2";
 const MAX_PROMPT_LENGTH = 2000;
 
 function detectWebgl(): boolean {
