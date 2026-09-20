@@ -1,7 +1,10 @@
-# cgen — AI CAD Generator (backend)
+# cgen — AI CAD Generator
 
 Natural-language prompt → Groq structured CAD spec → Pydantic validation →
 deterministic CadQuery engine → validated STEP/STL + download tokens.
+Existing parts are revised in place via natural-language modification, and
+the frontend keeps every successful generation/modification as a revision
+in a Project → Workspace → Revision history.
 
 ```text
 User prompt
@@ -9,11 +12,14 @@ User prompt
   → Pydantic validation (schema v3.2, allowlisted ops, tree limits)
   → CadQuery (deterministic geometry, no AI code execution)
   → STEP/STL (+ export validation, sanitized filenames, token downloads)
+
+Modify: current spec + instruction → Groq revised spec → structural diff
+guard → same deterministic engine → NEW revision (history preserved)
 ```
 
 Live: `https://cgen-poc.onrender.com` · Docs: `GET /docs` (OpenAPI)
 
-## Supported operations (schema v3.0)
+## Supported operations (schema v3.2)
 
 ```text
 box           {width, depth, height}
@@ -32,10 +38,12 @@ max-4 cap): `hole_pattern {diameter, count 2-12, circle_diameter,
 through | depth}` — N identical holes at angles 2π·i/count, deterministic.
 Rectangular/linear multi-hole layouts (v3.2, still ONE feature toward the
 max-4 cap): `hole_grid {diameter, rows 1-12, cols 1-12 (rows*cols <= 12),
-spacing_x, spacing_y, through | depth}` — rows×cols identical holes on a
+spacing_x?, spacing_y?, through | depth}` — rows×cols identical holes on a
 deterministic centered array (spacing = center-to-center); rows=1 or cols=1
-gives a straight line. Corner/row/coordinate layouts route here, genuinely
-circular layouts stay on hole_pattern.
+gives a straight line. Spacing is required exactly on multi-hole axes and
+stays null on single-hole axes (a 1×N row needs spacing_x only). Corner/row/
+coordinate layouts route here, genuinely circular layouts stay on
+hole_pattern.
 ```
 
 `part` wraps a built solid with deterministic features (max 4, applied by the
@@ -44,10 +52,18 @@ of list order):
 
 ```text
 hole    {diameter, through} or {diameter, depth}   centered on the part
-fillet  {radius}        all straight bbox-boundary edges (X/Y directions)
+fillet  {radius}        straight X/Y edges on outer bbox sides (fuse-split
+                        rims included; notch rims and curves excluded)
 chamfer {size}          same edge set as fillet, 45° bevel
 shell   {thickness}     hollow, top face open
 ```
+
+Fillet/chamfer edge selection is topological: X/Y-parallel edges whose
+constant plan coordinate is extreme. On a plain box this is the top/bottom
+rim set; on fused unions (L-brackets) it is the split outer rims. Radii
+that OCCT cannot roll fail with a controlled error suggesting a smaller
+radius — the empty-set rejection is preserved for truly edge-less solids
+(spheres, tori).
 
 All dimensions are millimeters (the model normalizes m/cm/inch → mm and
 diameters → radii). Operation trees are capped (depth ≤ 4, nodes ≤ 15).
@@ -115,12 +131,15 @@ arbitrary files. Files live on ephemeral disk (Render Free): download promptly.
 | GET | `/test/cad` | Milestone 1 box probe + export self-checks. |
 | GET | `/test/cad/download` | Milestone 1 box file download. |
 | POST | `/generate` | Full pipeline. 400 bad prompt, 422 bad spec, 500 CAD/server failure, 502 Groq failure. |
+| POST | `/modify` | Spec + instruction → revised spec → diff guard → files. Same response shape as `/generate`. 400 bad instruction, 422 guard/spec rejection, 500/502 as above. |
 | GET | `/download/{token}` | Token file download. 400 bad format, 404 unknown/expired token or lost file. |
 
 Errors never expose keys, paths, or tracebacks; details are logged server-side
 with the `request_id` (`generation_started`, `ai_spec_generated`,
 `cad_generation_started`, `cad_generation_completed`, `file_export_completed`,
-`generation_failed`, `download_requested`, `download_failed`).
+`generation_failed`, `modification_started`, `ai_modification_completed`,
+`modification_completed`, `modification_failed`, `download_requested`,
+`download_failed`).
 
 ## Project layout
 
@@ -128,11 +147,11 @@ with the `request_id` (`generation_started`, `ai_spec_generated`,
 backend/
 ├── app/
 │   ├── main.py               # routes + HTTP mapping + OpenAPI models
-│   ├── ai/groq_client.py     # Groq: JSON-only spec, safe error mapping
-  │   ├── cad/schema.py         # CADSpec v3.2 (Pydantic, strict)
+│   ├── ai/groq_client.py     # Groq: JSON-only spec + modify prompt, safe error mapping
+│   ├── cad/schema.py         # CADSpec v3.2 (Pydantic, strict)
 │   ├── cad/cadquery_engine.py# deterministic geometry + export validation
 │   └── services/
-│       ├── generation.py     # orchestration: timing, IDs, logging, renames
+│       ├── generation.py     # generate + modify orchestration, diff guard
 │       ├── file_store.py     # token store (TTL + count caps, ephemeral)
 │       └── names.py          # AI-name sanitization
 ├── tests/                    # pytest suite (no real Groq calls)
@@ -158,6 +177,30 @@ in the Render Dashboard (service → Environment); optional `GROQ_MODEL` overrid
 
 Costs remain $0: Render Free + Groq free tier + GitHub free.
 
+## M7 — Modification, revisions, schema v3.2
+
+**Modification (`POST /modify`).** The client sends the current spec plus a
+natural-language instruction; Groq returns a revised spec that passes through
+a deterministic structural diff guard *before* any CAD work: constants must
+hold, renames need an explicit request, the operation skeleton must match
+(no redesigns — e.g. part → union is rejected), and existing features may
+gain new siblings but never lose members. Rejections are controlled 422s.
+Numeric retunes (dimensions, diameters, counts, depths) and feature additions
+pass through the unchanged deterministic engine.
+
+**Project → Workspace → Revision (frontend-only, no backend changes).**
+Every successful generate/modify appends a revision parented to the previous
+active one — history is never overwritten. New Workspace starts empty without
+affecting existing workspaces; Clear Viewer hides the display only; clicking
+a history entry re-views it, and the next edit branches a new child off it.
+Download links stay backend-ephemeral (TTL/caps), so old revisions always
+keep their specs while file links may expire with a re-run prompt.
+
+**Schema v3.2.** `hole_grid` covers rectangular/linear multi-hole layouts
+(corners, rows, explicit coordinates) that a bolt circle cannot represent on
+non-square faces; genuinely circular layouts stay on `hole_pattern`, single
+centered holes on `hole`. Single-axis grids carry spacing on one axis only.
+
 ## M6 — Engineering feature expansion
 
 Backend: torus, polygon prism, intersect, and the `part` node (holes,
@@ -179,13 +222,18 @@ frontend/
 ├── components/
 │   ├── cad/CadViewport.tsx  # R3F canvas: orbit/zoom/pan, auto-framing, grid
 │   ├── cad/StlModel.tsx     # STL fetch → parse → center → dispose
-│   ├── GeneratePanel.tsx    # prompt input (2000 max) + states
+│   ├── BootScreen.tsx       # startup checks (schema, renderer, engine)
+│   ├── Inspector.tsx        # spec + downloads + revision history sidebar
+│   ├── RevisionHistory.tsx  # append-only revision list, time-travel select
 │   ├── SpecPanel.tsx        # name, units, operation, dims, op tree
 │   └── Downloads.tsx        # STEP/STL anchors (backend URLs, resolved)
 ├── lib/
-│   ├── api.ts            # API_BASE_URL, generatePart, guards, error mapping
+│   ├── api.ts            # API_BASE_URL, generatePart/modifyPart, guards, errors
+│   ├── revisions.ts      # pure Project → Workspace → Revision helpers
 │   └── spec.ts           # display labels derived from the validated spec
-├── types/api.ts          # strict M4 response types (no `any`)
+├── types/
+│   ├── api.ts            # strict response/spec types (no `any`)
+│   └── revisions.ts      # Revision/Workspace/Project types
 └── tests/                # vitest: api client, spec helpers, downloads
 ```
 

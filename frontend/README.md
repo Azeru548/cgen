@@ -3,8 +3,11 @@
 Next.js 16 + TypeScript + Three.js (`three`, `@react-three/fiber`,
 `@react-three/drei`). Vanilla CSS only — no Tailwind, no component library.
 
-Single workspace: describe a part → `POST /generate` on the cgen backend →
-STL preview in the browser → spec panel → STEP/STL downloads.
+Project → Workspace → Revision model: describe a part → `POST /generate`
+(or revise via `POST /modify`) on the cgen backend → every success appends a
+revision → STL preview in the browser → spec panel → STEP/STL downloads.
+History is append-only: new workspaces start fresh, clearing the viewer keeps
+all revisions, and re-viewing an old revision branches the next edit off it.
 
 - STEP is the authoritative CAD artifact (opened in Autodesk for verification).
 - STL is the lightweight visualization artifact, parsed with Three.js
