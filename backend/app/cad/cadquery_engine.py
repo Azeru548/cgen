@@ -435,14 +435,29 @@ def _is_axis_aligned_to_xy(edge, tol: float = 1e-6) -> bool:
 
 
 def _on_bbox_boundary_xy(edge, bbox, tol: float = 1e-6) -> bool:
-    """True when every vertex lies within the bbox boundary in X AND Y
-    (i.e. x ∈ {xmin, xmax} and y ∈ {ymin, ymax})."""
-    for v in edge.Vertices():
-        near_x = abs(v.X - bbox.xmin) <= tol or abs(v.X - bbox.xmax) <= tol
-        near_y = abs(v.Y - bbox.ymin) <= tol or abs(v.Y - bbox.ymax) <= tol
-        if not (near_x and near_y):
-            return False
-    return True
+    """True when a straight X/Y edge lies on an outer bounding-box side.
+
+    Only the edge's CONSTANT plan coordinate must be extreme (y ∈
+    {ymin, ymax} for an X-parallel edge, x ∈ {xmin, xmax} for a Y-parallel
+    one); endpoints may sit anywhere along that side. A boolean fuse splits
+    full-side rims at reentrant vertices, so requiring corner endpoints
+    rejects every segment of fused footprints (e.g. L-brackets) even though
+    the outer rims are valid fillet targets. Concave notch rims stay
+    excluded (their constant coordinate is interior), and on a plain box
+    the selected set is identical to the old corner-endpoint rule.
+    """
+    vertices = edge.Vertices()
+    if len(vertices) < 2:
+        return False
+    p0, p1 = vertices[0], vertices[1]
+    dx = abs(p1.X - p0.X)
+    dy = abs(p1.Y - p0.Y)
+    if dx >= dy:
+        # X-parallel (the caller pre-filters axis alignment): the side is
+        # defined by the constant Y.
+        return abs(p0.Y - bbox.ymin) <= tol or abs(p0.Y - bbox.ymax) <= tol
+    # Y-parallel: the side is defined by the constant X.
+    return abs(p0.X - bbox.xmin) <= tol or abs(p0.X - bbox.xmax) <= tol
 
 
 def _select_feature_edges(solid, cq):

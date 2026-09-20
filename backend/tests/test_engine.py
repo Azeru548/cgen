@@ -402,6 +402,70 @@ def test_fillet_on_curved_solid_rejected_cleanly():
         cadquery_engine._apply_fillet(ring, 2)
 
 
+def test_fillet_on_sphere_rejected_cleanly():
+    need_cq()
+    ball = cadquery_engine.make_sphere(25)
+    with pytest.raises(ValueError, match="no applicable straight boundary edges"):
+        cadquery_engine._apply_fillet(ball, 2)
+
+
+def test_fillet_on_union_bracket_succeeds():
+    """Live M7 repro: two-box bracket fused via union, then fillet.
+
+    The fuse splits outer rims at reentrant vertices, so the old
+    corner-endpoint selector found zero edges and rejected with
+    'no applicable straight boundary edges'. The side-colinear rule
+    selects the outer rims; the fillet succeeds and removes material.
+    """
+    need_cq()
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "l_bracket",
+            "operation": {
+                "type": "part",
+                "build": {
+                    "type": "union",
+                    "base": {"type": "box", "width": 100, "depth": 40, "height": 8},
+                    "tool": {"type": "box", "width": 40, "depth": 60, "height": 8},
+                },
+                "features": [{"type": "fillet", "radius": 2}],
+            },
+        }
+    )
+    plain = cadquery_engine.build_operation(spec.operation.build)
+    assert plain.Volume() == pytest.approx(38400, rel=1e-4)
+    solid = cadquery_engine.build_operation(spec.operation)
+    assert solid.isValid()
+    assert 0 < solid.Volume() < plain.Volume()
+
+
+def test_fillet_r5_on_union_bracket_rejected_cleanly():
+    """Same bracket with R5: outer rims ARE found now (the bogus no-edges
+    error is gone); R5 exceeds what OCCT can roll around the notched 8mm
+    rims, so it fails with the controlled, actionable radius error."""
+    need_cq()
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "l_bracket",
+            "operation": {
+                "type": "part",
+                "build": {
+                    "type": "union",
+                    "base": {"type": "box", "width": 100, "depth": 40, "height": 8},
+                    "tool": {"type": "box", "width": 40, "depth": 60, "height": 8},
+                },
+                "features": [{"type": "fillet", "radius": 5}],
+            },
+        }
+    )
+    with pytest.raises(RuntimeError, match="fillet failed"):
+        cadquery_engine.build_operation(spec.operation)
+
+
 def test_part_export_with_features():
     need_cq()
     spec = CADSpec.model_validate(
