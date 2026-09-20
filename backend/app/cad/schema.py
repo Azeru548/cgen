@@ -263,10 +263,12 @@ class HoleGridFeature(BaseModel):
     are CENTER-TO-CENTER distances between adjacent holes (not edge
     distances): holes 10mm from the edges of a 120×80 plate use
     spacing_x=100, spacing_y=60. rows=1 or cols=1 yields a straight line of
-    holes along one axis. Diameter/depth/through conventions match
-    HoleFeature. At most 12 holes per grid (same bound as hole_pattern
-    count), so cutter count stays small. The LLM never positions individual
-    holes; arbitrary per-hole coordinates are deliberately out of scope.
+    holes along one axis; the spacing on a single-hole axis is meaningless
+    and stays null (a 1×N row needs spacing_x only, an N×1 column needs
+    spacing_y only). Diameter/depth/through conventions match HoleFeature.
+    At most 12 holes per grid (same bound as hole_pattern count), so cutter
+    count stays small. The LLM never positions individual holes; arbitrary
+    per-hole coordinates are deliberately out of scope.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -275,8 +277,8 @@ class HoleGridFeature(BaseModel):
     diameter: Dim
     rows: int = Field(ge=1, le=12)
     cols: int = Field(ge=1, le=12)
-    spacing_x: Dim
-    spacing_y: Dim
+    spacing_x: Dim | None = None
+    spacing_y: Dim | None = None
     through: bool = False
     depth: Size | None = None
 
@@ -288,6 +290,17 @@ class HoleGridFeature(BaseModel):
             )
         if self.through and self.depth is not None:
             raise ValueError("through hole_grid must not specify depth")
+        return self
+
+    @model_validator(mode="after")
+    def axis_spacing_required(self) -> "HoleGridFeature":
+        # Same convention as blind-hole depth: a spacing is required exactly
+        # when its axis holds more than one hole. A single-hole axis has no
+        # spacing; the engine treats null as 0 (positions coincide anyway).
+        if self.cols > 1 and self.spacing_x is None:
+            raise ValueError("hole_grid with cols > 1 needs spacing_x")
+        if self.rows > 1 and self.spacing_y is None:
+            raise ValueError("hole_grid with rows > 1 needs spacing_y")
         return self
 
     @model_validator(mode="after")

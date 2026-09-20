@@ -340,11 +340,17 @@ def _apply_hole_pattern(solid, feature: HolePatternFeature, other_hole_radii: li
 
 
 def _grid_positions(feature: HoleGridFeature) -> list[tuple[float, float]]:
-    """Deterministic (x, y) centers for a hole_grid, XY-centered on origin."""
+    """Deterministic (x, y) centers for a hole_grid, XY-centered on origin.
+
+    A null spacing (single-hole axis, enforced by the schema) behaves as 0:
+    with one hole on that axis every center sits at 0 regardless.
+    """
+    sx = feature.spacing_x or 0.0
+    sy = feature.spacing_y or 0.0
     return [
         (
-            (i - (feature.cols - 1) / 2) * feature.spacing_x,
-            (j - (feature.rows - 1) / 2) * feature.spacing_y,
+            (i - (feature.cols - 1) / 2) * sx,
+            (j - (feature.rows - 1) / 2) * sy,
         )
         for j in range(feature.rows)
         for i in range(feature.cols)
@@ -356,7 +362,8 @@ def _validate_hole_grid(solid, feature: HoleGridFeature, other_hole_radii: list)
 
     Deterministic checks against the solid's bounding box:
       - the outermost hole edges fit inside the XY half-extents;
-      - adjacent holes do not overlap (each spacing >= one diameter);
+      - adjacent holes do not overlap (each multi-hole axis spacing >=
+        one diameter; single-hole axes need no spacing);
       - no grid hole overlaps another centered hole.
     Rejections use ValueError so they surface as 422.
     """
@@ -364,18 +371,20 @@ def _validate_hole_grid(solid, feature: HoleGridFeature, other_hole_radii: list)
     hx = (bbox.xmax - bbox.xmin) / 2
     hy = (bbox.ymax - bbox.ymin) / 2
     hole_radius = feature.diameter / 2
-    extent_x = ((feature.cols - 1) / 2) * feature.spacing_x + hole_radius
-    extent_y = ((feature.rows - 1) / 2) * feature.spacing_y + hole_radius
+    sx = feature.spacing_x or 0.0
+    sy = feature.spacing_y or 0.0
+    extent_x = ((feature.cols - 1) / 2) * sx + hole_radius
+    extent_y = ((feature.rows - 1) / 2) * sy + hole_radius
     if extent_x > hx + _PATTERN_FIT_TOL_MM or extent_y > hy + _PATTERN_FIT_TOL_MM:
         raise ValueError(
             "hole_grid does not fit: the outermost holes extend past the part face"
         )
-    if feature.cols > 1 and feature.spacing_x < 2 * hole_radius - _PATTERN_FIT_TOL_MM:
+    if feature.cols > 1 and sx < 2 * hole_radius - _PATTERN_FIT_TOL_MM:
         raise ValueError(
             "hole_grid holes overlap each other: increase spacing_x, "
             "use smaller holes, or use fewer columns"
         )
-    if feature.rows > 1 and feature.spacing_y < 2 * hole_radius - _PATTERN_FIT_TOL_MM:
+    if feature.rows > 1 and sy < 2 * hole_radius - _PATTERN_FIT_TOL_MM:
         raise ValueError(
             "hole_grid holes overlap each other: increase spacing_y, "
             "use smaller holes, or use fewer rows"

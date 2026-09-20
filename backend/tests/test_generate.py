@@ -1175,6 +1175,60 @@ def test_modify_invalid_spec_from_model_is_422(monkeypatch):
 # --- Schema v3.2: hole_grid prompt routing + end-to-end ------------------------
 
 
+def test_generate_part_with_single_axis_grid_mocked(monkeypatch, tmp_path):
+    """v3.2 live repro: 120x60 plate, 1x4 horizontal row (no Y spacing)
+    flows through /generate end to end."""
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "row_plate",
+            "operation": {
+                "type": "part",
+                "build": {"type": "box", "width": 120, "depth": 60, "height": 10},
+                "features": [
+                    {
+                        "type": "hole_grid",
+                        "diameter": 8,
+                        "rows": 1,
+                        "cols": 4,
+                        "spacing_x": 30,
+                        "spacing_y": None,
+                        "through": True,
+                    },
+                ],
+            },
+        }
+    )
+    step_path, stl_path = _write_valid_pair(tmp_path, stem="row_plate_part")
+
+    def fake_export(operation, name="part", out_dir=None):
+        assert operation.features[0].type == "hole_grid"
+        assert operation.features[0].spacing_y is None
+        return {
+            "operation": "part",
+            "step_bytes": 321,
+            "stl_bytes": 654,
+            "step_path": step_path,
+            "stl_path": stl_path,
+        }
+
+    monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
+    monkeypatch.setattr(
+        "app.services.generation.cadquery_engine.export_operation", fake_export
+    )
+
+    r = client.post(
+        "/generate",
+        json={"prompt": "Create a 120x60x10mm plate with four 8mm holes in a horizontal row."},
+    )
+    assert r.status_code == 200, r.text
+    grid = r.json()["specification"]["operation"]["features"][0]
+    assert grid["type"] == "hole_grid"
+    assert (grid["rows"], grid["cols"]) == (1, 4)
+    assert grid["spacing_y"] is None
+
+
 def test_groq_routes_rectangular_holes_to_grid(monkeypatch):
     """v3.2: the system prompt steers corner/rectangular/linear multi-hole
     layouts to ONE hole_grid — never to hole_pattern or several holes."""
@@ -1202,6 +1256,8 @@ def test_groq_routes_rectangular_holes_to_grid(monkeypatch):
         "near each corner",
         "Routing",
         "NEVER emit several",
+        "OMIT",
+        "1×1",
     ):
         assert required in system_text
 

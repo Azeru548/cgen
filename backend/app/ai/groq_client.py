@@ -101,6 +101,11 @@ positions:
   "spacing_x"/"spacing_y" are CENTER-TO-CENTER distances between adjacent
   holes, NOT edge distances: holes 10mm from the edges of a 120×80 plate sit
   100mm apart in X and 60mm apart in Y, so spacing_x=100, spacing_y=60.
+  Give a spacing ONLY for an axis with more than one hole and OMIT the
+  other (no spacing_y for a 1×N horizontal row, no spacing_x for an N×1
+  vertical column). A straight row of 4 holes with the first/last 15mm from
+  the ends of a 120mm plate uses cols=4 and spacing_x=(120-15-15)/3=30.
+  NEVER use a 1×1 grid for a single hole — that is just "hole".
   The array is always centered on the part — you NEVER give coordinates.
 Routing — pick exactly ONE hole representation, never combine guesses:
   one centered hole -> "hole";

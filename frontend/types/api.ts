@@ -106,14 +106,15 @@ export interface ShellFeature {
   thickness: number;
 }
 
-/** v3.2: rows×cols identical holes on a deterministic centered grid. */
+/** v3.2: rows×cols identical holes on a deterministic centered grid.
+ *  The spacing on a single-hole axis is null (1×N row: spacing_y null). */
 export interface HoleGridFeature {
   type: "hole_grid";
   diameter: number;
   rows: number;
   cols: number;
-  spacing_x: number;
-  spacing_y: number;
+  spacing_x: number | null;
+  spacing_y: number | null;
   through: boolean;
   depth: number | null;
 }

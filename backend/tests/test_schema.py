@@ -787,6 +787,31 @@ def test_hole_grid_unknown_fields_rejected():
         CADSpec.model_validate(grid_payload(2, 2, position=[10, 0]))
 
 
+def test_hole_grid_single_axis_spacing_nullable():
+    """Live v3.2 repro: a 1x4 row needs no Y spacing; a 4x1 column needs
+    no X spacing. Null on the single-hole axis is valid."""
+    row = CADSpec.model_validate(grid_payload(1, 4, spacing_y=None))
+    assert row.operation.features[0].spacing_y is None
+    assert row.operation.features[0].spacing_x == 40
+    col = CADSpec.model_validate(grid_payload(4, 1, spacing_x=None))
+    assert col.operation.features[0].spacing_x is None
+    assert col.operation.features[0].spacing_y == 20
+
+
+def test_hole_grid_multi_axis_spacing_required():
+    """Zero/omitted spacing is rejected exactly when its axis holds holes."""
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(grid_payload(2, 2, spacing_x=None))
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(grid_payload(2, 2, spacing_y=None))
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(grid_payload(1, 4, spacing_x=0))
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(grid_payload(4, 1, spacing_y=0))
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(grid_payload(2, 2, spacing_x=0, spacing_y=20))
+
+
 def test_plate_central_hole_plus_grid_within_cap():
     spec = CADSpec.model_validate(
         plate_payload(

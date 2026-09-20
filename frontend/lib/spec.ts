@@ -108,9 +108,18 @@ export function summarizeFeature(feature: CadFeature): string {
       return feature.through ? base : `${base} × ${formatMm(feature.depth ?? 0)} deep`;
     }
     case "hole_grid": {
+      // Single-hole axes carry null spacing — show only the live axis.
+      const pitch =
+        feature.rows > 1 && feature.cols > 1
+          ? `${formatMm(feature.spacing_x ?? 0)}×${formatMm(feature.spacing_y ?? 0)} pitch`
+          : feature.cols > 1
+            ? `${formatMm(feature.spacing_x ?? 0)} pitch`
+            : feature.rows > 1
+              ? `${formatMm(feature.spacing_y ?? 0)} pitch`
+              : "single";
       const base =
         `Hole Grid ⌀${formatMm(feature.diameter)} · ` +
-        `${feature.rows}×${feature.cols} · ${formatMm(feature.spacing_x)}×${formatMm(feature.spacing_y)} pitch`;
+        `${feature.rows}×${feature.cols} · ${pitch}`;
       return feature.through ? base : `${base} × ${formatMm(feature.depth ?? 0)} deep`;
     }
     case "fillet":

@@ -640,6 +640,42 @@ def test_grid_blind_holes_volume():
     assert solid.Volume() == pytest.approx(expected, rel=1e-4)
 
 
+def test_grid_one_by_four_horizontal_row_volume():
+    """Live v3.2 repro: 120x60x10 plate, 1x4 row, first/last holes 15mm
+    from the ends -> spacing_x=(120-15-15)/3=30, no Y spacing."""
+    need_cq()
+    solid = build_grid_part(
+        rows=1, cols=4, plate_width=120, plate_depth=60,
+        spacing_x=30, spacing_y=None,
+    )
+    hole_vol = 4 * math.pi * 16 * 10
+    expected = 120 * 60 * 10 - hole_vol
+    assert solid.Volume() == pytest.approx(expected, rel=1e-4)
+
+
+def test_grid_four_by_one_vertical_column_volume():
+    need_cq()
+    solid = build_grid_part(
+        rows=4, cols=1, plate_width=60, plate_depth=120,
+        spacing_x=None, spacing_y=30,
+    )
+    hole_vol = 4 * math.pi * 16 * 10
+    expected = 60 * 120 * 10 - hole_vol
+    assert solid.Volume() == pytest.approx(expected, rel=1e-4)
+
+
+def test_grid_one_by_one_single_hole_volume():
+    """A degenerate 1x1 grid cuts exactly one centered hole (prompt steers
+    single holes to `hole`, but the geometry stays correct if one arrives)."""
+    need_cq()
+    solid = build_grid_part(
+        rows=1, cols=1, spacing_x=None, spacing_y=None,
+    )
+    hole_vol = math.pi * 16 * 10
+    expected = 120 * 80 * 10 - hole_vol
+    assert solid.Volume() == pytest.approx(expected, rel=1e-4)
+
+
 def test_grid_oversize_extents_rejected():
     """The grid must fit on the face — no silent invalid geometry."""
     need_cq()
