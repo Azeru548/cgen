@@ -5,6 +5,7 @@
  * features, output files, and validation. Replaces the old SpecPanel +
  * Downloads combo with a denser, CAD-inspector-style layout.
  */
+import type { ReactNode } from "react";
 import { Downloads } from "./Downloads";
 import { RevisionHistory } from "./RevisionHistory";
 import { SpecPanel } from "./SpecPanel";
@@ -16,6 +17,7 @@ interface InspectorProps {
   status: string;
   workspace: Workspace;
   onSelectRevision: (revisionId: string) => void;
+  parametric?: ReactNode;
 }
 
 export function Inspector({
@@ -23,12 +25,14 @@ export function Inspector({
   status,
   workspace,
   onSelectRevision,
+  parametric,
 }: InspectorProps) {
   return (
     <>
       <div className="inspector-header">Inspector</div>
       <div className="inspector-body">
         <RevisionHistory workspace={workspace} onSelect={onSelectRevision} />
+        {parametric}
         {result && status === "ready" ? (
           <SpecPanel result={result} />
         ) : (

@@ -6,6 +6,7 @@ import { BootScreen, type BootChecks } from "@/components/BootScreen";
 import { CadViewport } from "@/components/cad/CadViewport";
 import type { PreviewState } from "@/components/cad/StlModel";
 import { Inspector } from "@/components/Inspector";
+import { ParametricPanel } from "@/components/ParametricPanel";
 import {
   checkBackendHealth,
   generatePart,
@@ -14,6 +15,7 @@ import {
   resolveFileUrl,
   type ApiError,
 } from "@/lib/api";
+import { useParametricSession } from "@/lib/useParametricSession";
 import {
   addWorkspace,
   appendRevision,
@@ -93,7 +95,38 @@ export default function Home() {
     [activeWorkspace],
   );
   const result = visible?.response ?? null;
-  const stlUrl = result ? resolveFileUrl(result.files.stl.download_url) : null;
+  const baseSpec = visible?.response.specification ?? null;
+
+  // M8.1 parametric session: edits are transient UI values; preview is the
+  // last successful rebuild (never a revision); committing appends exactly
+  // one revision. Everything resets when the visible revision changes.
+  const paramSession = useParametricSession(baseSpec);
+  const {
+    descriptors: paramDescriptors,
+    edits: paramEdits,
+    preview,
+    previewCurrent,
+    editsActive,
+    paramError,
+    previewBusy,
+    committing,
+  } = paramSession;
+
+  // Viewer: committed result by default; a current preview takes over; while
+  // stale/invalid the last good preview (or base) stays — never a jump.
+  const displayResult =
+    !editsActive
+      ? result
+      : previewCurrent && preview !== null
+        ? preview.response
+        : (preview?.response ?? result);
+  const stlUrl = displayResult ? resolveFileUrl(displayResult.files.stl.download_url) : null;
+
+  const sessionKey = visible?.response.request_id ?? `empty:${activeWorkspace.id}`;
+  const resetParamSession = paramSession.reset;
+  useEffect(() => {
+    resetParamSession();
+  }, [sessionKey, resetParamSession]);
 
   const handleGenerate = useCallback(async () => {
     if (status === "generating") return;
@@ -148,6 +181,14 @@ export default function Home() {
       setStatus("error");
     }
   }, [prompt, status, visible]);
+
+  const handleParamCommit = useCallback(async () => {
+    if (status === "generating") return;
+    const done = await paramSession.commit();
+    if (done !== null) {
+      setProject((p) => appendRevision(p, "adjust", done.summary, done.response));
+    }
+  }, [paramSession, status]);
 
   const handleNewWorkspace = useCallback(() => {
     setProject((p) => addWorkspace(p, `Workspace ${p.workspaces.length + 1}`));
@@ -376,6 +417,20 @@ export default function Home() {
             status={status}
             workspace={activeWorkspace}
             onSelectRevision={handleSelectRevision}
+            parametric={
+              visible !== null && paramDescriptors.length > 0 ? (
+                <ParametricPanel
+                  params={paramDescriptors}
+                  values={paramEdits}
+                  busy={committing || busy}
+                  previewing={previewBusy}
+                  error={paramError}
+                  canCommit={paramSession.canCommit}
+                  onPreview={paramSession.previewValue}
+                  onCommit={handleParamCommit}
+                />
+              ) : undefined
+            }
           />
         </aside>
       </main>

@@ -23,6 +23,10 @@ Milestone 4:
 Milestone 7:
   POST /modify        -> spec + instruction -> Groq -> diff guard -> CAD -> files
 
+Milestone 8.1:
+  POST /rebuild       -> base + edited spec -> numeric guard -> CAD -> files
+  (no AI on this path; topology changes rejected)
+
 No auth, no DB. Ephemeral disk only.
 """
 
@@ -48,6 +52,7 @@ from .services.generation import (
     ModificationRejectedError,
     run_generation,
     run_modification,
+    run_rebuild,
 )
 
 logger = logging.getLogger("cgen.api")
@@ -338,6 +343,67 @@ def modify(body: ModifyRequest):
         raise HTTPException(status_code=422, detail=str(e))
     except groq_client.SpecModificationError as e:
         raise HTTPException(status_code=502, detail=str(e))
+    except ModificationRejectedError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return GenerateResponse(
+        status="completed",
+        request_id=result.request_id,
+        specification=result.specification,
+        units=result.units,
+        generation_time_ms=result.generation_time_ms,
+        files={
+            key: FileMetadata(
+                format=meta.format,
+                filename=meta.filename,
+                bytes=meta.bytes,
+                download_url=meta.download_url,
+            )
+            for key, meta in result.files.items()
+        },
+    )
+
+
+class RebuildRequest(BaseModel):
+    base_specification: dict = Field(
+        description="Current valid CAD specification (the parametric base)."
+    )
+    specification: dict = Field(
+        description="Edited CAD specification: numeric values only, same structure."
+    )
+
+
+@app.post(
+    "/rebuild",
+    response_model=GenerateResponse,
+    responses={
+        400: {"description": "Invalid request: malformed specifications."},
+        422: {
+            "description": "Rebuild rejected: structural/topology change or "
+            "CAD validation failed."
+        },
+        500: {"description": "CAD generation failure."},
+    },
+)
+def rebuild(body: RebuildRequest):
+    """Rebuild CAD from a numerically edited spec. No AI on this path.
+
+    Pipeline: base + edited spec -> structural guard (numeric-only) ->
+    deterministic CadQuery engine -> validated STEP/STL + download tokens.
+    Groq is never called; topology changes are rejected with 422.
+    """
+    request_id = uuid.uuid4().hex
+    try:
+        result = run_rebuild(
+            body.base_specification,
+            body.specification,
+            request_id=request_id,
+            file_store=file_store,
+        )
     except ModificationRejectedError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except ValueError as e:

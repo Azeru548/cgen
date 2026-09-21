@@ -5,6 +5,7 @@ import {
   generatePart,
   humanizeApiError,
   parseGenerateResponse,
+  rebuildPart,
   resolveFileUrl,
 } from "../lib/api";
 
@@ -128,6 +129,59 @@ describe("generatePart", () => {
         }),
       ).toThrow(ApiError);
     }
+  });
+});
+
+describe("rebuildPart", () => {
+  const base = {
+    document_type: "3d_part",
+    units: "mm",
+    name: "plate",
+    operation: { type: "box", width: 100, depth: 60, height: 20 },
+  };
+  const edited = {
+    document_type: "3d_part",
+    units: "mm",
+    name: "plate",
+    operation: { type: "box", width: 120, depth: 60, height: 20 },
+  };
+
+  it("posts both specs as JSON to POST /rebuild without a prompt", async () => {
+    await rebuildPart(base, edited);
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/rebuild$/);
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.base_specification).toEqual(base);
+    expect(body.specification).toEqual(edited);
+    expect(body).not.toHaveProperty("prompt");
+    expect(body).not.toHaveProperty("instruction");
+  });
+
+  it("parses a successful rebuild response", async () => {
+    const rebuilt = {
+      ...SHAFT_RESPONSE,
+      request_id: "rebuild-1",
+      specification: edited,
+    };
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(jsonResponse(rebuilt));
+    const result = await rebuildPart(base, edited);
+    expect(result.request_id).toBe("rebuild-1");
+    expect(result.specification.operation).toMatchObject({ width: 120 });
+  });
+
+  it("surfaces guard rejections with status and detail", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ detail: "Rebuild changes the operation structure" }, 422),
+    );
+    const err = await rebuildPart(base, edited).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(422);
+    expect((err as ApiError).detail).toContain("operation structure");
   });
 });
 

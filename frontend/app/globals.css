@@ -920,6 +920,105 @@ button { font: inherit; }
   text-overflow: ellipsis;
 }
 
+/* --- parametric panel (M8.1 local adjustment, dark workstation) --- */
+
+.param-group {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0.45rem 0 0.15rem;
+}
+
+.param-row { padding: 0.3rem 0; }
+
+.param-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.param-label { font-size: 0.74rem; color: var(--ink-secondary); }
+
+.param-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+}
+
+.param-input {
+  width: 4.2rem;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.15rem 0.35rem;
+}
+
+.param-input:hover:not(:disabled) { background: var(--input-hover); }
+
+.param-input:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+
+.param-input:disabled { opacity: 0.5; }
+
+.param-unit {
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  color: var(--ink-faint);
+}
+
+.param-slider {
+  width: 100%;
+  margin-top: 0.3rem;
+  accent-color: var(--accent);
+}
+
+.param-slider:disabled { opacity: 0.5; }
+
+.param-error {
+  margin-top: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--danger);
+  border-left: 2px solid var(--danger);
+  padding-left: 0.5rem;
+}
+
+.param-hint {
+  margin-top: 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+.param-apply {
+  margin-top: 0.5rem;
+  width: 100%;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+}
+
+.param-apply:hover:not(:disabled) { border-color: var(--accent); }
+
+.param-apply:disabled { opacity: 0.45; cursor: default; }
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }

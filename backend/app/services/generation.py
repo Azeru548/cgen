@@ -457,3 +457,179 @@ def run_modification(
     except Exception as e:
         logger.warning("modification_failed request_id=%s error=%s", request_id, e)
         raise
+
+
+# ---------------------------------------------------------------------------
+# Parametric rebuild pipeline (M8.1)
+# ---------------------------------------------------------------------------
+
+
+def _ordered_feature_types(op: object) -> list[str]:
+    """Feature type list in spec order ([] for non-part operations)."""
+    feats = getattr(op, "features", None)
+    if not feats:
+        return []
+    return [f.type for f in feats]
+
+
+def _only_floats_differ(old: object, new: object) -> bool:
+    """True when two validated-spec dumps differ in float leaves only.
+
+    model_dump() gives JSON-native types: bools stay bools (checked before
+    ints, since bool subclasses int), ints (counts, sides, rows/cols) and
+    strings must match exactly, dicts/lists must match in shape. Every
+    continuous CAD dimension is a float, so float leaves are the only
+    permitted change — this single check rejects type swaps, count/side
+    changes, through/blind flips, and feature add/remove/reorder/size
+    changes without enumerating them.
+    """
+    if isinstance(old, bool) or isinstance(new, bool):
+        return old is new
+    if isinstance(old, float) and isinstance(new, float):
+        return True
+    if isinstance(old, dict) and isinstance(new, dict):
+        return set(old) == set(new) and all(
+            _only_floats_differ(old[k], new[k]) for k in old
+        )
+    if isinstance(old, list) and isinstance(new, list):
+        return len(old) == len(new) and all(
+            _only_floats_differ(o, n) for o, n in zip(old, new)
+        )
+    return old == new
+
+
+def validate_rebuild(old: CADSpec, new: CADSpec) -> None:
+    """Rebuild guard: the edited spec must be a numeric-only retune.
+
+    Allowed: float dimension changes within the same operation skeleton.
+    Rejected (ModificationRejectedError, mapped to HTTP 422): constants
+    drift, renames, skeleton redesigns (uses _structure_signature, which is
+    stricter than _skeletons_compatible — bare-solid to part promotion is a
+    topology change here, not an addition), feature add/remove/replace/
+    reorder (ordered type lists must match exactly), and any int/bool/str
+    change (counts, sides, rows/cols, through flags).
+
+    Deterministic, no LLM involved. No Groq is ever called on this path.
+    """
+    if old.document_type != new.document_type or old.units != new.units:
+        raise ModificationRejectedError(
+            "Rebuild changed document_type or units, which must remain constant."
+        )
+
+    if old.name != new.name:
+        raise ModificationRejectedError(
+            "Rebuild changed the part name. The rebuild path never renames."
+        )
+
+    if _structure_signature(old.operation) != _structure_signature(new.operation):
+        raise ModificationRejectedError(
+            "Rebuild changes the operation structure (redesign). "
+            "Only numeric parameter changes within the same shape are allowed."
+        )
+
+    if _ordered_feature_types(old.operation) != _ordered_feature_types(new.operation):
+        raise ModificationRejectedError(
+            "Rebuild changes the feature list. Features may not be added, "
+            "removed, replaced, or reordered on the rebuild path."
+        )
+
+    if not _only_floats_differ(old.model_dump(), new.model_dump()):
+        raise ModificationRejectedError(
+            "Rebuild changes non-numeric fields (counts, sides, through "
+            "flags, or structure). Only dimension values may change."
+        )
+
+    if old.model_dump() == new.model_dump():
+        raise ModificationRejectedError(
+            "No changes detected in the specification."
+        )
+
+
+def run_rebuild(
+    base_spec: dict,
+    updated_spec: dict,
+    *,
+    request_id: str,
+    file_store: FileStore,
+) -> GenerationResult:
+    """Rebuild CAD from an edited spec with no AI involved.
+
+    Raises ModificationRejectedError (422) for structural/topology changes,
+    ValueError (422) for invalid specs or geometry, RuntimeError (500) for
+    CAD/export failures. Groq is never imported, keyed, or called here.
+    """
+    old_spec = CADSpec.model_validate(base_spec)
+    new_spec = CADSpec.model_validate(updated_spec)
+
+    logger.info("rebuild_started request_id=%s", request_id)
+    started = time.monotonic()
+
+    try:
+        validate_rebuild(old_spec, new_spec)
+        logger.info("rebuild_validated request_id=%s", request_id)
+
+        stem = sanitize_name(new_spec.name, fallback=new_spec.operation.type)
+        if stem == "rectangular_block" and new_spec.operation.type != "box":
+            stem = default_name_for(new_spec.operation.type)
+
+        logger.info(
+            "cad_generation_started request_id=%s operation=%s",
+            request_id,
+            new_spec.operation.type,
+        )
+        cad_started = time.monotonic()
+        op = new_spec.operation
+        if isinstance(op, BoxOperation):
+            exported = cadquery_engine.export_box(
+                width=op.width, depth=op.depth, height=op.height
+            )
+        else:
+            exported = cadquery_engine.export_operation(op, name=stem)
+        cad_ms = int((time.monotonic() - cad_started) * 1000)
+
+        step_final = _rename_to_stem(Path(exported["step_path"]), stem, "step")
+        stl_final = _rename_to_stem(Path(exported["stl_path"]), stem, "stl")
+
+        checks = cadquery_engine.validate_exported_files(step_final, stl_final)
+        logger.info(
+            "file_export_completed request_id=%s step_bytes=%d stl_bytes=%d checks=%s",
+            request_id,
+            step_final.stat().st_size,
+            stl_final.stat().st_size,
+            ",".join(sorted(checks)),
+        )
+
+        token = file_store.put(
+            step_path=str(step_final), stl_path=str(stl_final), stem=stem
+        )
+        files = {
+            "step": GeneratedFile(
+                format="step",
+                filename=step_final.name,
+                bytes=step_final.stat().st_size,
+                download_url=f"/download/{token}?format=step",
+            ),
+            "stl": GeneratedFile(
+                format="stl",
+                filename=stl_final.name,
+                bytes=stl_final.stat().st_size,
+                download_url=f"/download/{token}?format=stl",
+            ),
+        }
+        total_ms = int((time.monotonic() - started) * 1000)
+        logger.info(
+            "rebuild_completed request_id=%s cad_ms=%d total_ms=%d",
+            request_id,
+            cad_ms,
+            total_ms,
+        )
+        return GenerationResult(
+            request_id=request_id,
+            specification=new_spec.model_dump(),
+            units=new_spec.units,
+            files=files,
+            generation_time_ms=total_ms,
+        )
+    except Exception as e:
+        logger.warning("rebuild_failed request_id=%s error=%s", request_id, e)
+        raise

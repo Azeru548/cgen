@@ -152,6 +152,43 @@ export async function modifyPart(
   return parseGenerateResponse(data);
 }
 
+export async function rebuildPart(
+  baseSpecification: Record<string, unknown>,
+  specification: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<GenerateResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/rebuild`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        base_specification: baseSpecification,
+        specification,
+      }),
+      signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
+    throw new ApiError("Cannot reach the CAD service.", null);
+  }
+  if (!response.ok) {
+    const detail = await readDetail(response);
+    throw new ApiError(
+      `Rebuild failed (HTTP ${response.status}).`,
+      response.status,
+      detail,
+    );
+  }
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    throw new ApiError("Malformed API response.", response.status);
+  }
+  return parseGenerateResponse(data);
+}
+
 export async function checkBackendHealth(): Promise<BackendHealth | null> {
   try {
     const response = await fetch(`${API_BASE_URL}/health`, { method: "GET" });
