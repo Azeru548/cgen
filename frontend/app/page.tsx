@@ -7,6 +7,7 @@ import { CadViewport } from "@/components/cad/CadViewport";
 import type { PreviewState } from "@/components/cad/StlModel";
 import { Inspector } from "@/components/Inspector";
 import { ParametricPanel } from "@/components/ParametricPanel";
+import { WorkspaceHome } from "@/components/WorkspaceHome";
 import {
   checkBackendHealth,
   generatePart,
@@ -26,11 +27,13 @@ import {
   switchWorkspace,
   visibleRevision,
 } from "@/lib/revisions";
+import { computeLiveScale } from "@/lib/parameters";
 import type { BackendHealth } from "@/types/api";
 import type { Project } from "@/types/revisions";
 
 type PageStatus = "idle" | "generating" | "ready" | "error";
 type EngineState = "ready" | "processing" | "error" | "unknown";
+type AppView = "home" | "workspace";
 
 const SCHEMA_VERSION = "SCHEMA 3.2";
 const MAX_PROMPT_LENGTH = 2000;
@@ -49,6 +52,7 @@ function detectWebgl(): boolean {
 }
 
 export default function Home() {
+  const [view, setView] = useState<AppView>("home");
   const [prompt, setPrompt] = useState("");
   const [status, setStatus] = useState<PageStatus>("idle");
   // Project → Workspace → Revision model: revisions are append-only, so a
@@ -104,6 +108,7 @@ export default function Home() {
   const {
     descriptors: paramDescriptors,
     edits: paramEdits,
+    editedSpec,
     preview,
     previewCurrent,
     editsActive,
@@ -121,6 +126,14 @@ export default function Home() {
         ? preview.response
         : (preview?.response ?? result);
   const stlUrl = displayResult ? resolveFileUrl(displayResult.files.stl.download_url) : null;
+
+  // Instant dial feedback: scale the currently displayed mesh toward the
+  // edited spec while a rebuild is pending. Cleared when the preview lands
+  // (geometry already matches) so the authoritative mesh is unscaled.
+  const liveScale = useMemo(() => {
+    if (!editsActive || editedSpec === null || displayResult === null) return null;
+    return computeLiveScale(displayResult.specification, editedSpec);
+  }, [editsActive, editedSpec, displayResult]);
 
   const sessionKey = visible?.response.request_id ?? `empty:${activeWorkspace.id}`;
   const resetParamSession = paramSession.reset;
@@ -196,6 +209,26 @@ export default function Home() {
     setGenerateError(null);
     setPreviewError(null);
     setStatus("idle");
+    setView("workspace");
+  }, []);
+
+  const handleOpenWorkspace = useCallback((workspaceId: string) => {
+    setProject((p) => {
+      const next = switchWorkspace(p, workspaceId);
+      const target = getActiveWorkspace(next);
+      setGenerateError(null);
+      setPreviewError(null);
+      setStatus(visibleRevision(target) === null ? "idle" : "ready");
+      return next;
+    });
+    setView("workspace");
+  }, []);
+
+  const handleGoHome = useCallback(() => {
+    abortRef.current?.abort();
+    setView("home");
+    setGenerateError(null);
+    setPreviewError(null);
   }, []);
 
   const handleClearViewer = useCallback(() => {
@@ -285,6 +318,25 @@ export default function Home() {
     ? `Backend ${health.status} \u00b7 CadQuery ${health.cadquery_version ?? "unknown"}`
     : "Backend status unknown";
 
+  const engineReady = health !== null && health.cadquery_available;
+
+  if (view === "home") {
+    return (
+      <>
+        {booting ? (
+          <BootScreen checks={bootChecks} onDone={handleBootDone} />
+        ) : null}
+        <WorkspaceHome
+          project={project}
+          busy={busy}
+          engineReady={engineReady}
+          onOpen={handleOpenWorkspace}
+          onCreate={handleNewWorkspace}
+        />
+      </>
+    );
+  }
+
   return (
     <div className="workspace">
       {booting ? (
@@ -292,10 +344,16 @@ export default function Home() {
       ) : null}
 
       <header className="topbar">
-        <div className="brand">
+        <button
+          type="button"
+          className="brand"
+          onClick={handleGoHome}
+          title="Back to workspaces"
+          aria-label="Back to workspace shelf"
+        >
           <Image
             src="/logo-removebg.png"
-            alt="cgen logo"
+            alt=""
             width={32}
             height={32}
             className="brand-logo"
@@ -303,16 +361,26 @@ export default function Home() {
           />
           <span className="brand-text">
             <strong>cgen</strong>
-            <small>AI CAD generator</small>
+            <small>← Workspaces</small>
           </span>
-        </div>
-        <div
-          className={`engine-pill ${engineState}`}
-          title={engineTitle}
-          role="status"
-        >
-          <span className="engine-dot" aria-hidden="true" />
-          {engineLabel}
+        </button>
+        <div className="topbar-actions">
+          <button
+            type="button"
+            className="session-action"
+            onClick={handleGoHome}
+            disabled={busy}
+          >
+            All workspaces
+          </button>
+          <div
+            className={`engine-pill ${engineState}`}
+            title={engineTitle}
+            role="status"
+          >
+            <span className="engine-dot" aria-hidden="true" />
+            {engineLabel}
+          </div>
         </div>
       </header>
 
@@ -352,6 +420,14 @@ export default function Home() {
         >
           + New workspace
         </button>
+        <button
+          className="session-action"
+          onClick={handleGoHome}
+          disabled={busy}
+          title="Return to the workspace shelf"
+        >
+          ← Shelf
+        </button>
       </div>
 
       <main className="layout">
@@ -363,6 +439,7 @@ export default function Home() {
             onPreviewStatus={handlePreviewStatus}
             onSelectExample={setPrompt}
             schemaVersion={SCHEMA_VERSION}
+            liveScale={liveScale}
           />
 
           <div className="prompt-bar">

@@ -307,3 +307,45 @@ function fmt(value: number): string {
 export function specsEqualJson(a: CadSpecification, b: CadSpecification): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
+
+function buildOf(spec: CadSpecification): BoxOperation | CylinderOperation | null {
+  const build = spec.operation.type === "part" ? spec.operation.build : spec.operation;
+  return build.type === "box" || build.type === "cylinder" ? build : null;
+}
+
+/**
+ * Client-side live scale from the displayed mesh's spec to the edited spec.
+ * Lets box/cylinder dial drags update the mesh immediately (no roundtrip);
+ * feature-only edits return identity/null until the debounced rebuild lands.
+ */
+export function computeLiveScale(
+  from: CadSpecification,
+  to: CadSpecification,
+): [number, number, number] | null {
+  const a = buildOf(from);
+  const b = buildOf(to);
+  if (a === null || b === null || a.type !== b.type) return null;
+  if (a.type === "box" && b.type === "box") {
+    if (a.width <= 0 || a.depth <= 0 || a.height <= 0) return null;
+    const scale: [number, number, number] = [
+      b.width / a.width,
+      b.depth / a.depth,
+      b.height / a.height,
+    ];
+    return isNearlyOne(scale) ? null : scale;
+  }
+  if (a.type === "cylinder" && b.type === "cylinder") {
+    if (a.radius <= 0 || a.height <= 0) return null;
+    const scale: [number, number, number] = [
+      b.radius / a.radius,
+      b.radius / a.radius,
+      b.height / a.height,
+    ];
+    return isNearlyOne(scale) ? null : scale;
+  }
+  return null;
+}
+
+function isNearlyOne(scale: [number, number, number]): boolean {
+  return scale.every((s) => Math.abs(s - 1) < 1e-6);
+}

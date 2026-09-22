@@ -26,6 +26,8 @@ interface CadViewportProps {
   onSelectExample: (prompt: string) => void;
   /** Technical chip text shown top-left (schema/engine revision). */
   schemaVersion?: string;
+  /** Immediate dial-drag scale applied to the current mesh. */
+  liveScale?: [number, number, number] | null;
 }
 
 export function CadViewport({
@@ -35,6 +37,7 @@ export function CadViewport({
   onPreviewStatus,
   onSelectExample,
   schemaVersion,
+  liveScale,
 }: CadViewportProps) {
   const [geometry, setGeometry] = useState<THREE.BufferGeometry | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
@@ -59,12 +62,14 @@ export function CadViewport({
               url={stlUrl}
               onStatus={onPreviewStatus}
               onGeometry={setGeometry}
+              scale={liveScale}
             />
           ) : null}
           <FrameCamera
             geometry={geometry}
             resetSignal={resetSignal}
             floorY={handleFloorY}
+            scale={liveScale}
           />
           <Grid
             position={[0, floorY, 0]}

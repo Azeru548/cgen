@@ -3,9 +3,10 @@
 /**
  * ParametricPanel - compact M8.1 direct-adjustment controls.
  *
- * Presentational only: sliders/inputs emit transient previews and commit
- * signals; all rebuild/revision orchestration lives in the page. Renders
- * nothing when the current spec exposes no parameters.
+ * Presentational only: sliders/inputs emit transient previews; commits are
+ * explicit (Apply / Enter) so releasing a dial never rewrites the session.
+ * All rebuild/revision orchestration lives in the page. Renders nothing
+ * when the current spec exposes no parameters.
  */
 import type { ParameterDescriptor } from "@/lib/parameters";
 
@@ -65,7 +66,6 @@ export function ParametricPanel({
                 const next = clampInput(e.target.value);
                 if (next !== null) onPreview(param.key, next);
               }}
-              onBlur={onCommit}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
@@ -81,16 +81,13 @@ export function ParametricPanel({
         <input
           className="param-slider"
           type="range"
-          min={param.min}
-          max={param.max}
+          min={Math.min(param.min, shown)}
+          max={Math.max(param.max, shown)}
           step={param.step}
-          value={Math.min(param.max, Math.max(param.min, shown))}
+          value={shown}
           disabled={busy}
           aria-label={`${param.label} slider in millimeters`}
           onChange={(e) => onPreview(param.key, Number(e.target.value))}
-          onPointerUp={onCommit}
-          onKeyUp={onCommit}
-          onBlur={onCommit}
         />
       </div>
     );
