@@ -100,7 +100,7 @@ def export_assembly_document(
     for component in validated.components:
         local = _build_local_solid(component)
         local_export = cadquery_engine._export_solid(
-            local, f"{stem}_{component.id}"
+            local, f"{stem}_{component.id}", out_dir=None
         )
         component_files[component.id] = _files_from_export(
             local_export, f"{stem}_{component.id}", file_store

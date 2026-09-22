@@ -331,3 +331,58 @@ def test_generate_rejects_invented_component_type(monkeypatch):
     r = client.post("/generate", json={"prompt": "Make a magic widget assembly."})
     assert r.status_code == 422
     assert "Unknown component type" in r.json()["detail"] or "component_type" in r.json()["detail"]
+
+
+def test_export_assembly_document_calls_export_solid_with_optional_out_dir(monkeypatch, tmp_path):
+    """Regression: _export_solid(solid, stem) used to TypeError without out_dir."""
+    from app.cad import cadquery_engine
+    from app.services.assembly import export_assembly_document
+    from app.services.file_store import FileStore
+
+    calls: list[tuple] = []
+
+    def fake_export_solid(solid, stem, out_dir=None):
+        calls.append((stem, out_dir))
+        step = tmp_path / f"{stem}.step"
+        stl = tmp_path / f"{stem}.stl"
+        step.write_bytes(b"ISO-10303-21;")
+        stl.write_bytes(b"solid x\nendsolid x\n")
+        return {
+            "step_path": str(step),
+            "stl_path": str(stl),
+            "step_bytes": step.stat().st_size,
+            "stl_bytes": stl.stat().st_size,
+        }
+
+    monkeypatch.setattr(cadquery_engine, "_export_solid", fake_export_solid)
+    monkeypatch.setattr(cadquery_engine, "apply_transform", lambda s, p, r: s)
+    monkeypatch.setattr(
+        cadquery_engine,
+        "export_solids",
+        lambda solids, stem, out_dir=None: fake_export_solid(solids, stem, out_dir),
+    )
+    monkeypatch.setattr(
+        cadquery_engine, "validate_exported_files", lambda *a, **k: {"ok": True}
+    )
+    monkeypatch.setattr(
+        "app.services.assembly._build_local_solid", lambda component: object()
+    )
+
+    spec = AssemblySpec(
+        name="kit",
+        components=[
+            ComponentInstance(
+                id="box_1",
+                component_type="box",
+                name="Box",
+                parameters={"width": 10, "depth": 10, "height": 10},
+            )
+        ],
+    )
+    result = export_assembly_document(
+        spec, request_id="req", file_store=FileStore()
+    )
+    assert result.specification["document_type"] == "3d_assembly"
+    assert "box_1" in result.component_files
+    assert calls, "expected _export_solid to be invoked"
+    assert all(len(c) == 2 for c in calls)

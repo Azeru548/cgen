@@ -676,7 +676,7 @@ def validate_exported_files(step_path: str | Path, stl_path: str | Path) -> dict
     return checks
 
 
-def _export_solid(solid, stem: str, out_dir: str | Path | None) -> dict:
+def _export_solid(solid, stem: str, out_dir: str | Path | None = None) -> dict:
     cq = _require_cq()
     target = Path(out_dir) if out_dir else Path(tempfile.mkdtemp(prefix="cgen_"))
     target.mkdir(parents=True, exist_ok=True)
