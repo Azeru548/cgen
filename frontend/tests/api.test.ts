@@ -73,7 +73,10 @@ describe("generatePart", () => {
   it("parses a successful response", async () => {
     const result = await generatePart("Create a shaft.");
     expect(result.status).toBe("completed");
-    expect(result.specification.operation.type).toBe("cut");
+    expect(result.specification.document_type).toBe("3d_part");
+    if (result.specification.document_type === "3d_part") {
+      expect(result.specification.operation.type).toBe("cut");
+    }
     expect(result.files.step.bytes).toBe(9338);
   });
 
@@ -104,6 +107,35 @@ describe("generatePart", () => {
     expect(() => parseGenerateResponse({ ...SHAFT_RESPONSE, files: null })).toThrow(
       ApiError,
     );
+  });
+
+  it("accepts an assembly specification at the contract boundary", () => {
+    expect(() =>
+      parseGenerateResponse({
+        ...SHAFT_RESPONSE,
+        specification: {
+          document_type: "3d_assembly",
+          units: "mm",
+          name: "kit",
+          schema_version: "4.0",
+          components: [
+            {
+              id: "box_1",
+              component_type: "box",
+              name: "Box",
+              parameters: { width: 10, depth: 10, height: 10 },
+              transform: { position: [0, 0, 0], rotation: [0, 0, 0] },
+              visible: true,
+              instances: [],
+              relationships: [],
+            },
+          ],
+        },
+        component_files: {
+          box_1: SHAFT_RESPONSE.files,
+        },
+      }),
+    ).not.toThrow();
   });
 
   it("accepts M6 operation types at the contract boundary", () => {
@@ -170,7 +202,11 @@ describe("rebuildPart", () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(rebuilt));
     const result = await rebuildPart(base, edited);
     expect(result.request_id).toBe("rebuild-1");
-    expect(result.specification.operation).toMatchObject({ width: 120 });
+    if (result.specification.document_type === "3d_part") {
+      expect(result.specification.operation).toMatchObject({ width: 120 });
+    } else {
+      expect.fail("expected a 3d_part specification");
+    }
   });
 
   it("surfaces guard rejections with status and detail", async () => {

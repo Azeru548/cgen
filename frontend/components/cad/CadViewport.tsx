@@ -16,14 +16,30 @@ export const EXAMPLE_PROMPTS = [
   "Create a 100mm × 60mm × 30mm rectangular block.",
   "Create a 50mm diameter sphere.",
   "Create a 120mm shaft with a 15mm through-hole.",
+  "Create an enclosure for an Arduino Uno with four M3 mounting screws and a USB opening.",
 ];
 
+export interface SceneViewObject {
+  id: string;
+  url: string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  visible: boolean;
+  selected: boolean;
+  instances: Array<{
+    position: [number, number, number];
+    rotation: [number, number, number];
+  }>;
+  recenter: boolean;
+}
+
 interface CadViewportProps {
-  stlUrl: string | null;
+  objects: SceneViewObject[];
   busy: boolean;
   previewError: string | null;
   onPreviewStatus: (state: PreviewState, message?: string) => void;
   onSelectExample: (prompt: string) => void;
+  onSelectObject?: (id: string | null) => void;
   /** Technical chip text shown top-left (schema/engine revision). */
   schemaVersion?: string;
   /** Immediate dial-drag scale applied to the current mesh. */
@@ -31,19 +47,25 @@ interface CadViewportProps {
 }
 
 export function CadViewport({
-  stlUrl,
+  objects,
   busy,
   previewError,
   onPreviewStatus,
   onSelectExample,
+  onSelectObject,
   schemaVersion,
   liveScale,
 }: CadViewportProps) {
-  const [geometry, setGeometry] = useState<THREE.BufferGeometry | null>(null);
+  const [sceneRoot, setSceneRoot] = useState<THREE.Group | null>(null);
+  const [contentRev, setContentRev] = useState(0);
   const [resetSignal, setResetSignal] = useState(0);
   const [floorY, setFloorY] = useState(0);
   const handleFloorY = useCallback((y: number) => setFloorY(y), []);
-  const showEmpty = !stlUrl && !busy && !previewError;
+  const handleGeometry = useCallback(() => {
+    setContentRev((n) => n + 1);
+  }, []);
+  const visible = objects.filter((o) => o.visible && o.url);
+  const showEmpty = visible.length === 0 && !busy && !previewError;
 
   return (
     <div className="viewport" data-testid="viewport">
@@ -57,19 +79,38 @@ export function CadViewport({
         <directionalLight position={[120, 180, 90]} intensity={1.35} />
         <directionalLight position={[-100, 60, -120]} intensity={0.45} />
         <Suspense fallback={null}>
-          {stlUrl ? (
-            <StlModel
-              url={stlUrl}
-              onStatus={onPreviewStatus}
-              onGeometry={setGeometry}
-              scale={liveScale}
-            />
-          ) : null}
+          <group
+            ref={setSceneRoot}
+            onPointerMissed={() => onSelectObject?.(null)}
+          >
+            {visible.map((object) => {
+              const poses =
+                object.instances.length > 0
+                  ? object.instances
+                  : [{ position: object.position, rotation: object.rotation }];
+              return poses.map((pose, index) => (
+                <StlModel
+                  key={`${object.id}:${index}`}
+                  url={object.url}
+                  onStatus={onPreviewStatus}
+                  onGeometry={handleGeometry}
+                  scale={liveScale}
+                  position={pose.position}
+                  rotationDeg={pose.rotation}
+                  recenter={object.recenter}
+                  selected={object.selected}
+                  objectId={object.id}
+                  onSelect={onSelectObject}
+                />
+              ));
+            })}
+          </group>
           <FrameCamera
-            geometry={geometry}
+            group={sceneRoot}
+            contentRev={contentRev}
             resetSignal={resetSignal}
             floorY={handleFloorY}
-            scale={liveScale}
+            hasContent={visible.length > 0}
           />
           <Grid
             position={[0, floorY, 0]}
@@ -112,7 +153,7 @@ export function CadViewport({
           type="button"
           className="viewport-reset"
           onClick={() => setResetSignal((s) => s + 1)}
-          disabled={!geometry}
+          disabled={visible.length === 0}
           aria-label="Reset view"
         >
           Reset view
@@ -123,7 +164,7 @@ export function CadViewport({
         <div className="viewport-overlay" data-testid="empty-state">
           <p className="overlay-title">Your CAD model will appear here</p>
           <p className="overlay-text">
-            Describe a part below to generate your first model.
+            Describe a part, or add a component from the library.
           </p>
           <ul className="overlay-examples">
             {EXAMPLE_PROMPTS.map((prompt) => (

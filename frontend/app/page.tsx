@@ -5,17 +5,29 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BootScreen, type BootChecks } from "@/components/BootScreen";
 import { CadViewport } from "@/components/cad/CadViewport";
 import type { PreviewState } from "@/components/cad/StlModel";
+import { AssemblyTree } from "@/components/AssemblyTree";
+import { ComponentBrowser } from "@/components/ComponentBrowser";
 import { Inspector } from "@/components/Inspector";
+import { ObjectInspector } from "@/components/ObjectInspector";
 import { ParametricPanel } from "@/components/ParametricPanel";
 import { WorkspaceHome } from "@/components/WorkspaceHome";
 import {
+  addAssemblyComponent,
   checkBackendHealth,
+  fetchComponentCatalog,
   generatePart,
   humanizeApiError,
   modifyPart,
+  removeAssemblyComponent,
   resolveFileUrl,
+  updateAssemblyComponent,
   type ApiError,
 } from "@/lib/api";
+import {
+  isPartSpec,
+  sceneObjects,
+  type SceneObject,
+} from "@/lib/assembly";
 import { useParametricSession } from "@/lib/useParametricSession";
 import {
   addWorkspace,
@@ -28,14 +40,19 @@ import {
   visibleRevision,
 } from "@/lib/revisions";
 import { computeLiveScale } from "@/lib/parameters";
-import type { BackendHealth } from "@/types/api";
+import type {
+  BackendHealth,
+  CatalogComponent,
+  GenerateResponse,
+  ParamValue,
+} from "@/types/api";
 import type { Project } from "@/types/revisions";
 
 type PageStatus = "idle" | "generating" | "ready" | "error";
 type EngineState = "ready" | "processing" | "error" | "unknown";
 type AppView = "home" | "workspace";
 
-const SCHEMA_VERSION = "SCHEMA 3.2";
+const SCHEMA_VERSION = "SCHEMA 4.0";
 const MAX_PROMPT_LENGTH = 2000;
 
 function detectWebgl(): boolean {
@@ -72,6 +89,33 @@ export default function Home() {
   });
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [catalog, setCatalog] = useState<CatalogComponent[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [visibilityDraft, setVisibilityDraft] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [draftName, setDraftName] = useState("");
+  const [draftPosition, setDraftPosition] = useState<[number, number, number]>([
+    0, 0, 0,
+  ]);
+  const [draftRotation, setDraftRotation] = useState<[number, number, number]>([
+    0, 0, 0,
+  ]);
+  const [draftParams, setDraftParams] = useState<Record<string, ParamValue>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchComponentCatalog()
+      .then((data) => {
+        if (!cancelled) setCatalog(data.components);
+      })
+      .catch(() => {
+        if (!cancelled) setCatalog([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -125,7 +169,53 @@ export default function Home() {
       : previewCurrent && preview !== null
         ? preview.response
         : (preview?.response ?? result);
-  const stlUrl = displayResult ? resolveFileUrl(displayResult.files.stl.download_url) : null;
+  const objects: SceneObject[] = useMemo(() => {
+    if (!displayResult) return [];
+    const base = sceneObjects(displayResult, resolveFileUrl, catalog);
+    return base.map((object) => {
+      const vis = visibilityDraft[object.id];
+      if (vis === undefined) return object;
+      return { ...object, visible: vis };
+    });
+  }, [displayResult, catalog, visibilityDraft]);
+
+  const activeSelectedId =
+    selectedId !== null && objects.some((o) => o.id === selectedId)
+      ? selectedId
+      : null;
+  const selectedObject = useMemo(
+    () => objects.find((o) => o.id === activeSelectedId) ?? null,
+    [objects, activeSelectedId],
+  );
+
+  const placementDirty = useMemo(() => {
+    if (selectedObject === null) return false;
+    const visChanged = Object.prototype.hasOwnProperty.call(
+      visibilityDraft,
+      selectedObject.id,
+    );
+    return (
+      draftName !== selectedObject.name ||
+      draftPosition[0] !== selectedObject.transform.position[0] ||
+      draftPosition[1] !== selectedObject.transform.position[1] ||
+      draftPosition[2] !== selectedObject.transform.position[2] ||
+      draftRotation[0] !== selectedObject.transform.rotation[0] ||
+      draftRotation[1] !== selectedObject.transform.rotation[1] ||
+      draftRotation[2] !== selectedObject.transform.rotation[2] ||
+      visChanged
+    );
+  }, [
+    selectedObject,
+    draftName,
+    draftPosition,
+    draftRotation,
+    visibilityDraft,
+  ]);
+
+  const paramsDirty = useMemo(() => {
+    if (selectedObject === null) return false;
+    return JSON.stringify(draftParams) !== JSON.stringify(selectedObject.parameters);
+  }, [selectedObject, draftParams]);
 
   // Instant dial feedback: scale the currently displayed mesh toward the
   // edited spec while a rebuild is pending. Cleared when the preview lands
@@ -140,6 +230,31 @@ export default function Home() {
   useEffect(() => {
     resetParamSession();
   }, [sessionKey, resetParamSession]);
+
+  const hydrateDrafts = useCallback((object: SceneObject) => {
+    setDraftName(object.name);
+    setDraftPosition([
+      object.transform.position[0],
+      object.transform.position[1],
+      object.transform.position[2],
+    ]);
+    setDraftRotation([
+      object.transform.rotation[0],
+      object.transform.rotation[1],
+      object.transform.rotation[2],
+    ]);
+    setDraftParams({ ...object.parameters });
+  }, []);
+
+  const handleSelectObject = useCallback(
+    (id: string | null) => {
+      setSelectedId(id);
+      if (id === null) return;
+      const object = objects.find((item) => item.id === id);
+      if (object) hydrateDrafts(object);
+    },
+    [objects, hydrateDrafts],
+  );
 
   const handleGenerate = useCallback(async () => {
     if (status === "generating") return;
@@ -202,6 +317,105 @@ export default function Home() {
       setProject((p) => appendRevision(p, "adjust", done.summary, done.response));
     }
   }, [paramSession, status]);
+
+  const specRecord = useCallback((): Record<string, unknown> | null => {
+    if (visible === null) return null;
+    return visible.response.specification as unknown as Record<string, unknown>;
+  }, [visible]);
+
+  const commitAssembly = useCallback(
+    async (label: string, work: () => Promise<GenerateResponse>) => {
+      if (status === "generating") return;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setStatus("generating");
+      setGenerateError(null);
+      try {
+        const response = await work();
+        setProject((p) => appendRevision(p, "assemble", label, response));
+        setStatus("ready");
+        setVisibilityDraft({});
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setGenerateError(humanizeApiError(err as ApiError));
+        setStatus("error");
+      }
+    },
+    [status],
+  );
+
+  const handleAddComponent = useCallback(
+    (type: string, count = 1) => {
+      void commitAssembly(`Add ${type}`, () =>
+        addAssemblyComponent(specRecord(), type, { count }, abortRef.current?.signal),
+      );
+    },
+    [commitAssembly, specRecord],
+  );
+
+  const handleRemoveComponent = useCallback(
+    (id: string) => {
+      const spec = specRecord();
+      if (spec === null) return;
+      void commitAssembly(`Remove ${id}`, () =>
+        removeAssemblyComponent(spec, id, abortRef.current?.signal),
+      );
+    },
+    [commitAssembly, specRecord],
+  );
+
+  const handleToggleVisible = useCallback((id: string) => {
+    setVisibilityDraft((prev) => {
+      const current = objects.find((o) => o.id === id);
+      const shown = Object.prototype.hasOwnProperty.call(prev, id)
+        ? prev[id]
+        : (current?.visible ?? true);
+      return { ...prev, [id]: !shown };
+    });
+  }, [objects]);
+
+  const handleApplyPlacement = useCallback(() => {
+    const spec = specRecord();
+    if (spec === null || activeSelectedId === null) return;
+    const vis = Object.prototype.hasOwnProperty.call(visibilityDraft, activeSelectedId)
+      ? visibilityDraft[activeSelectedId]
+      : selectedObject?.visible;
+    void commitAssembly(`Place ${activeSelectedId}`, () =>
+      updateAssemblyComponent(
+        spec,
+        activeSelectedId,
+        {
+          name: draftName,
+          transform: { position: draftPosition, rotation: draftRotation },
+          visible: vis,
+        },
+        abortRef.current?.signal,
+      ),
+    );
+  }, [
+    specRecord,
+    activeSelectedId,
+    selectedObject,
+    draftName,
+    draftPosition,
+    draftRotation,
+    visibilityDraft,
+    commitAssembly,
+  ]);
+
+  const handleApplyParams = useCallback(() => {
+    const spec = specRecord();
+    if (spec === null || activeSelectedId === null) return;
+    void commitAssembly(`Edit ${activeSelectedId}`, () =>
+      updateAssemblyComponent(
+        spec,
+        activeSelectedId,
+        { parameters: draftParams },
+        abortRef.current?.signal,
+      ),
+    );
+  }, [specRecord, activeSelectedId, draftParams, commitAssembly]);
 
   const handleNewWorkspace = useCallback(() => {
     setProject((p) => addWorkspace(p, `Workspace ${p.workspaces.length + 1}`));
@@ -433,11 +647,29 @@ export default function Home() {
       <main className="layout">
         <div className="workspace-main">
           <CadViewport
-            stlUrl={stlUrl}
+            objects={objects.map((object) => {
+              const isSel = object.id === activeSelectedId;
+              const transform = isSel
+                ? { position: draftPosition, rotation: draftRotation }
+                : object.transform;
+              return {
+                id: object.id,
+                url: object.stlUrl ?? "",
+                position: transform.position,
+                rotation: transform.rotation,
+                visible: object.visible && Boolean(object.stlUrl),
+                selected: isSel,
+                instances: object.instances,
+                recenter:
+                  displayResult !== null &&
+                  isPartSpec(displayResult.specification),
+              };
+            })}
             busy={busy}
             previewError={previewError}
             onPreviewStatus={handlePreviewStatus}
             onSelectExample={setPrompt}
+            onSelectObject={handleSelectObject}
             schemaVersion={SCHEMA_VERSION}
             liveScale={liveScale}
           />
@@ -494,6 +726,59 @@ export default function Home() {
             status={status}
             workspace={activeWorkspace}
             onSelectRevision={handleSelectRevision}
+            assembly={
+              <>
+                <AssemblyTree
+                  name={
+                    displayResult
+                      ? displayResult.specification.name
+                      : activeWorkspace.name
+                  }
+                  objects={objects}
+                  selectedId={activeSelectedId}
+                  onSelect={handleSelectObject}
+                  onToggleVisible={handleToggleVisible}
+                  onRemove={handleRemoveComponent}
+                  busy={busy}
+                />
+                <ComponentBrowser
+                  catalog={catalog}
+                  busy={busy}
+                  onAdd={handleAddComponent}
+                />
+                <ObjectInspector
+                  object={selectedObject}
+                  catalog={catalog}
+                  draftName={draftName}
+                  draftPosition={draftPosition}
+                  draftRotation={draftRotation}
+                  draftParams={draftParams}
+                  placementDirty={placementDirty}
+                  paramsDirty={paramsDirty}
+                  busy={busy}
+                  onName={setDraftName}
+                  onPosition={(axis, value) =>
+                    setDraftPosition((prev) => {
+                      const next: [number, number, number] = [...prev];
+                      next[axis] = value;
+                      return next;
+                    })
+                  }
+                  onRotation={(axis, value) =>
+                    setDraftRotation((prev) => {
+                      const next: [number, number, number] = [...prev];
+                      next[axis] = value;
+                      return next;
+                    })
+                  }
+                  onParam={(key, value) =>
+                    setDraftParams((prev) => ({ ...prev, [key]: value }))
+                  }
+                  onApplyPlacement={handleApplyPlacement}
+                  onApplyParams={handleApplyParams}
+                />
+              </>
+            }
             parametric={
               visible !== null && paramDescriptors.length > 0 ? (
                 <ParametricPanel

@@ -1546,6 +1546,204 @@ button.brand:hover {
 
 .param-apply:disabled { opacity: 0.45; cursor: default; }
 
+/* --- assembly tree / component browser --- */
+
+.assembly-root {
+  font-weight: 700;
+  font-size: 0.92rem;
+  margin-bottom: 0.45rem;
+}
+
+.inspector-empty-inline {
+  font-size: 0.82rem;
+  color: var(--ink-faint);
+  font-weight: 500;
+}
+
+.assembly-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.assembly-list li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.2rem;
+  align-items: center;
+}
+
+.assembly-item {
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.55rem;
+  cursor: pointer;
+}
+
+.assembly-item.selected {
+  border-color: var(--cobalt);
+  background: var(--cobalt-soft);
+}
+
+.assembly-item-name {
+  display: block;
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.assembly-item-type {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.assembly-icon {
+  width: 1.7rem;
+  height: 1.7rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--ink-secondary);
+}
+
+.assembly-icon.danger:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: #f0b4b4;
+}
+
+.browser-hint {
+  font-size: 0.78rem;
+  color: var(--ink-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.browser-cat { margin-bottom: 0.35rem; }
+
+.browser-cat-toggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: transparent;
+  border: none;
+  padding: 0.35rem 0;
+  font-weight: 700;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.browser-count {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  color: var(--ink-faint);
+}
+
+.browser-list { list-style: none; }
+
+.browser-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem;
+  align-items: start;
+  padding: 0.45rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.browser-name { font-size: 0.84rem; font-weight: 650; }
+.browser-desc {
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+  line-height: 1.35;
+}
+
+.browser-add {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--coral);
+  background: var(--coral-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-pill);
+  padding: 0.35rem 0.65rem;
+  cursor: pointer;
+}
+
+.object-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0.45rem;
+  font-size: 0.72rem;
+  color: var(--ink-secondary);
+}
+
+.object-input {
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.5rem;
+  background: var(--input);
+}
+
+.object-xyz {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.35rem;
+}
+
+.object-type {
+  font-size: 0.68rem;
+  color: var(--ink-faint);
+  margin-bottom: 0.5rem;
+}
+
+.object-apply {
+  width: 100%;
+  margin: 0.4rem 0 0.7rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--border-strong);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.object-apply.mint:hover:not(:disabled) {
+  border-color: var(--mint);
+  background: var(--mint-soft);
+}
+
+.object-apply:hover:not(:disabled) {
+  border-color: var(--cobalt);
+  background: var(--cobalt-soft);
+}
+
+.object-apply:disabled { opacity: 0.45; cursor: default; }
+
+.object-check {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  font-size: 0.84rem;
+  margin-bottom: 0.4rem;
+}
+
+.object-meta {
+  font-size: 0.64rem;
+  color: var(--ink-faint);
+  margin-top: 0.35rem;
+}
+
 /* --- responsive --- */
 
 @media (max-width: 960px) {

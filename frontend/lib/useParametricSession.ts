@@ -21,12 +21,12 @@ import {
   summarizeAdjustments,
   type ParameterDescriptor,
 } from "@/lib/parameters";
-import type { CadSpecification, GenerateResponse } from "@/types/api";
+import type { DocumentSpecification, GenerateResponse } from "@/types/api";
 
 export const PREVIEW_DEBOUNCE_MS = 650;
 
 export interface SessionPreview {
-  spec: CadSpecification;
+  spec: DocumentSpecification;
   response: GenerateResponse;
 }
 
@@ -36,10 +36,10 @@ export interface CommitResult {
 }
 
 function buildEditedSpec(
-  base: CadSpecification,
+  base: DocumentSpecification,
   descriptors: ParameterDescriptor[],
   edits: Record<string, number>,
-): CadSpecification {
+): DocumentSpecification {
   let next = base;
   for (const d of descriptors) {
     const value = edits[d.key];
@@ -49,7 +49,7 @@ function buildEditedSpec(
   return next;
 }
 
-export function useParametricSession(baseSpec: CadSpecification | null) {
+export function useParametricSession(baseSpec: DocumentSpecification | null) {
   const [edits, setEdits] = useState<Record<string, number>>({});
   const [preview, setPreview] = useState<SessionPreview | null>(null);
   const [paramError, setParamError] = useState<string | null>(null);
@@ -67,7 +67,7 @@ export function useParametricSession(baseSpec: CadSpecification | null) {
     [baseSpec],
   );
 
-  const editedSpec = useMemo<CadSpecification | null>(() => {
+  const editedSpec = useMemo<DocumentSpecification | null>(() => {
     if (baseSpec === null) return null;
     try {
       return buildEditedSpec(baseSpec, descriptors, edits);
@@ -112,8 +112,8 @@ export function useParametricSession(baseSpec: CadSpecification | null) {
   const runRebuild = useCallback(
     async (
       seq: number,
-      base: CadSpecification,
-      spec: CadSpecification,
+      base: DocumentSpecification,
+      spec: DocumentSpecification,
     ): Promise<GenerateResponse | null> => {
       const controller = new AbortController();
       abortRef.current = controller;
@@ -197,7 +197,7 @@ export function useParametricSession(baseSpec: CadSpecification | null) {
     }
     abortRef.current?.abort();
     try {
-      let spec: CadSpecification;
+      let spec: DocumentSpecification;
       try {
         spec = buildEditedSpec(baseSpec, descriptors, nowEdits);
       } catch {

@@ -132,10 +132,36 @@ describe("extractParameters", () => {
   });
 });
 
+describe("extractParameters assembly", () => {
+  it("does not expose part dials on an assembly document", () => {
+    const descriptors = extractParameters({
+      document_type: "3d_assembly",
+      units: "mm",
+      name: "kit",
+      schema_version: "4.0",
+      components: [
+        {
+          id: "box_1",
+          component_type: "box",
+          name: "Box",
+          parameters: { width: 10, depth: 10, height: 10 },
+          transform: { position: [0, 0, 0], rotation: [0, 0, 0] },
+          visible: true,
+          instances: [],
+          relationships: [],
+        },
+      ],
+    });
+    expect(descriptors).toEqual([]);
+  });
+});
+
 describe("applyParameter", () => {
   it("returns a new spec without mutating the original", () => {
     const before = JSON.parse(JSON.stringify(BOX));
     const next = applyParameter(BOX, { kind: "build", field: "width" }, 120);
+    expect(next.document_type).toBe("3d_part");
+    if (next.document_type !== "3d_part") throw new Error("unreachable");
     expect(next.operation).toMatchObject({ type: "box", width: 120 });
     expect(BOX).toEqual(before);
     expect(next).not.toBe(BOX);
@@ -145,6 +171,7 @@ describe("applyParameter", () => {
     let next = applyParameter(PART_HOLE_FILLET, { kind: "build", field: "height" }, 25);
     next = applyParameter(next, { kind: "feature", index: 0, field: "diameter" }, 14);
     next = applyParameter(next, { kind: "feature", index: 1, field: "filletRadius" }, 5);
+    if (next.document_type !== "3d_part") throw new Error("unreachable");
     expect(next.operation).toMatchObject({ type: "part" });
     if (next.operation.type !== "part") throw new Error("unreachable");
     expect(next.operation.build).toMatchObject({ height: 25 });

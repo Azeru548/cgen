@@ -1,20 +1,21 @@
 # cgen — AI CAD Generator
 
-Natural-language prompt → Groq structured CAD spec → Pydantic validation →
-deterministic CadQuery engine → validated STEP/STL + download tokens.
+Natural-language prompt → Groq structured CAD spec or assembly plan →
+Pydantic validation → deterministic component registry + CadQuery engine →
+validated STEP/STL + download tokens.
 Existing parts are revised in place via natural-language modification, and
-the frontend keeps every successful generation/modification as a revision
-in a Project → Workspace → Revision history.
+the frontend keeps every successful generation/modification/assembly edit as
+a revision in a Project → Workspace → Revision history.
 
 ```text
 User prompt
-  → Groq structured CAD spec (JSON only, never executable code)
-  → Pydantic validation (schema v3.2, allowlisted ops, tree limits)
+  → Groq JSON only (3d_part v3.2 or 3d_assembly v4.0; never executable code)
+  → Pydantic validation (allowlisted ops / registry component types)
   → CadQuery (deterministic geometry, no AI code execution)
-  → STEP/STL (+ export validation, sanitized filenames, token downloads)
+  → STEP/STL (+ per-component files for assemblies)
 
-Modify: current spec + instruction → Groq revised spec → structural diff
-guard → same deterministic engine → NEW revision (history preserved)
+Library insert / move / hide / param: NO LLM
+  → POST /assembly/add|update|remove or POST /rebuild
 ```
 
 Live: `https://cgen-poc.onrender.com` · Docs: `GET /docs` (OpenAPI)
@@ -130,8 +131,12 @@ arbitrary files. Files live on ephemeral disk (Render Free): download promptly.
 | GET | `/health` | Cheap liveness (no AI, no CAD). |
 | GET | `/test/cad` | Milestone 1 box probe + export self-checks. |
 | GET | `/test/cad/download` | Milestone 1 box file download. |
-| POST | `/generate` | Full pipeline. 400 bad prompt, 422 bad spec, 500 CAD/server failure, 502 Groq failure. |
+| POST | `/generate` | Full pipeline. 400 bad prompt, 422 bad spec, 500 CAD/server failure, 502 Groq failure. May return `3d_part` or `3d_assembly`. |
 | POST | `/modify` | Spec + instruction → revised spec → diff guard → files. Same response shape as `/generate`. 400 bad instruction, 422 guard/spec rejection, 500/502 as above. |
+| GET | `/components` | Deterministic component catalog (no AI, no CAD). |
+| POST | `/assembly/add` | Insert a registry component. Promotes a `3d_part` to an assembly. No AI. |
+| POST | `/assembly/update` | Parameters, transform, visibility, or name of one object. No AI. |
+| POST | `/assembly/remove` | Remove one object (not the last). No AI. |
 | GET | `/download/{token}` | Token file download. 400 bad format, 404 unknown/expired token or lost file. |
 
 Errors never expose keys, paths, or tracebacks; details are logged server-side

@@ -1,7 +1,12 @@
 /** Minimal API client for the cgen backend. No secrets live here —
  *  the browser only ever sends a prompt and receives files/metadata.
  */
-import type { BackendHealth, GenerateResponse } from "@/types/api";
+import type {
+  BackendHealth,
+  ComponentsCatalog,
+  GenerateResponse,
+  ParamValue,
+} from "@/types/api";
 
 export const API_BASE_URL = (
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000"
@@ -52,6 +57,23 @@ function isFileMetadata(value: unknown): boolean {
   );
 }
 
+function isPartSpecification(spec: Record<string, unknown>): boolean {
+  return (
+    spec.document_type === "3d_part" &&
+    typeof spec.name === "string" &&
+    isRecord(spec.operation) &&
+    isValidOperationType(spec.operation.type)
+  );
+}
+
+function isAssemblySpecification(spec: Record<string, unknown>): boolean {
+  return (
+    spec.document_type === "3d_assembly" &&
+    typeof spec.name === "string" &&
+    Array.isArray(spec.components)
+  );
+}
+
 /** Runtime guard: reject malformed backend payloads before they reach UI state. */
 export function parseGenerateResponse(data: unknown): GenerateResponse {
   if (!isRecord(data)) throw new ApiError("Malformed API response.", null);
@@ -62,14 +84,15 @@ export function parseGenerateResponse(data: unknown): GenerateResponse {
     typeof data.request_id !== "string" ||
     !isRecord(spec) ||
     typeof spec.name !== "string" ||
-    !isRecord(spec.operation) ||
-    !isValidOperationType(spec.operation.type) ||
     typeof data.units !== "string" ||
     typeof data.generation_time_ms !== "number" ||
     !isRecord(files) ||
     !isFileMetadata(files.step) ||
     !isFileMetadata(files.stl)
   ) {
+    throw new ApiError("Malformed API response.", null);
+  }
+  if (!isPartSpecification(spec) && !isAssemblySpecification(spec)) {
     throw new ApiError("Malformed API response.", null);
   }
   return data as unknown as GenerateResponse;
@@ -187,6 +210,117 @@ export async function rebuildPart(
     throw new ApiError("Malformed API response.", response.status);
   }
   return parseGenerateResponse(data);
+}
+
+async function postJson(
+  path: string,
+  body: unknown,
+  signal: AbortSignal | undefined,
+  failVerb: string,
+): Promise<GenerateResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
+    throw new ApiError("Cannot reach the CAD service.", null);
+  }
+  if (!response.ok) {
+    const detail = await readDetail(response);
+    throw new ApiError(
+      `${failVerb} failed (HTTP ${response.status}).`,
+      response.status,
+      detail,
+    );
+  }
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    throw new ApiError("Malformed API response.", response.status);
+  }
+  return parseGenerateResponse(data);
+}
+
+export async function fetchComponentCatalog(
+  signal?: AbortSignal,
+): Promise<ComponentsCatalog> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/components`, { method: "GET", signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
+    throw new ApiError("Cannot reach the CAD service.", null);
+  }
+  if (!response.ok) {
+    throw new ApiError(`Catalog failed (HTTP ${response.status}).`, response.status);
+  }
+  const data: unknown = await response.json();
+  if (!isRecord(data) || !Array.isArray(data.components)) {
+    throw new ApiError("Malformed catalog response.", null);
+  }
+  return data as unknown as ComponentsCatalog;
+}
+
+export async function addAssemblyComponent(
+  specification: Record<string, unknown> | null,
+  componentType: string,
+  options: {
+    parameters?: Record<string, ParamValue>;
+    count?: number;
+    name?: string;
+  } = {},
+  signal?: AbortSignal,
+): Promise<GenerateResponse> {
+  return postJson(
+    "/assembly/add",
+    {
+      specification,
+      component_type: componentType,
+      parameters: options.parameters,
+      count: options.count ?? 1,
+      name: options.name,
+    },
+    signal,
+    "Add component",
+  );
+}
+
+export async function removeAssemblyComponent(
+  specification: Record<string, unknown>,
+  componentId: string,
+  signal?: AbortSignal,
+): Promise<GenerateResponse> {
+  return postJson(
+    "/assembly/remove",
+    { specification, component_id: componentId },
+    signal,
+    "Remove component",
+  );
+}
+
+export async function updateAssemblyComponent(
+  specification: Record<string, unknown>,
+  componentId: string,
+  patch: {
+    parameters?: Record<string, ParamValue>;
+    transform?: { position: [number, number, number]; rotation: [number, number, number] };
+    visible?: boolean;
+    name?: string;
+  },
+  signal?: AbortSignal,
+): Promise<GenerateResponse> {
+  return postJson(
+    "/assembly/update",
+    { specification, component_id: componentId, ...patch },
+    signal,
+    "Update component",
+  );
 }
 
 export async function checkBackendHealth(): Promise<BackendHealth | null> {

@@ -57,7 +57,7 @@ from .services.generation import (
 
 logger = logging.getLogger("cgen.api")
 
-app = FastAPI(title="cgen PoC — FastAPI + CadQuery", version="0.6.0")
+app = FastAPI(title="cgen PoC — FastAPI + CadQuery", version="0.9.0")
 
 
 def _cors_origins() -> list[str]:
@@ -115,11 +115,44 @@ class FileMetadata(BaseModel):
 class GenerateResponse(BaseModel):
     status: Literal["completed"] = Field(description="Always 'completed' on success.")
     request_id: str = Field(description="Random ID for this request; see server logs.")
-    specification: dict = Field(description="Validated CAD specification (schema v3.2).")
+    specification: dict = Field(
+        description="Validated CAD specification (schema v3.2 part or v4.0 assembly)."
+    )
     units: str = Field(description="Length unit used throughout: mm.")
     generation_time_ms: int = Field(description="Total backend generation time.")
     files: dict[str, FileMetadata] = Field(
-        description="Generated files keyed by 'step' and 'stl'."
+        description="Generated files keyed by 'step' and 'stl' (combined assembly export)."
+    )
+    component_files: dict[str, dict[str, FileMetadata]] | None = Field(
+        default=None,
+        description="Per-component STEP/STL for assemblies, keyed by component id.",
+    )
+
+
+def _to_file_meta(meta) -> FileMetadata:
+    return FileMetadata(
+        format=meta.format,
+        filename=meta.filename,
+        bytes=meta.bytes,
+        download_url=meta.download_url,
+    )
+
+
+def _to_generate_response(result) -> GenerateResponse:
+    component_files = None
+    if result.component_files:
+        component_files = {
+            cid: {fmt: _to_file_meta(meta) for fmt, meta in files.items()}
+            for cid, files in result.component_files.items()
+        }
+    return GenerateResponse(
+        status="completed",
+        request_id=result.request_id,
+        specification=result.specification,
+        units=result.units,
+        generation_time_ms=result.generation_time_ms,
+        files={key: _to_file_meta(meta) for key, meta in result.files.items()},
+        component_files=component_files,
     )
 
 
@@ -290,22 +323,7 @@ def generate(body: GenerateRequest):
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    return GenerateResponse(
-        status="completed",
-        request_id=result.request_id,
-        specification=result.specification,
-        units=result.units,
-        generation_time_ms=result.generation_time_ms,
-        files={
-            key: FileMetadata(
-                format=meta.format,
-                filename=meta.filename,
-                bytes=meta.bytes,
-                download_url=meta.download_url,
-            )
-            for key, meta in result.files.items()
-        },
-    )
+    return _to_generate_response(result)
 
 
 @app.post(
@@ -350,22 +368,7 @@ def modify(body: ModifyRequest):
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    return GenerateResponse(
-        status="completed",
-        request_id=result.request_id,
-        specification=result.specification,
-        units=result.units,
-        generation_time_ms=result.generation_time_ms,
-        files={
-            key: FileMetadata(
-                format=meta.format,
-                filename=meta.filename,
-                bytes=meta.bytes,
-                download_url=meta.download_url,
-            )
-            for key, meta in result.files.items()
-        },
-    )
+    return _to_generate_response(result)
 
 
 class RebuildRequest(BaseModel):
@@ -411,22 +414,174 @@ def rebuild(body: RebuildRequest):
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    return GenerateResponse(
-        status="completed",
-        request_id=result.request_id,
-        specification=result.specification,
-        units=result.units,
-        generation_time_ms=result.generation_time_ms,
-        files={
-            key: FileMetadata(
-                format=meta.format,
-                filename=meta.filename,
-                bytes=meta.bytes,
-                download_url=meta.download_url,
-            )
-            for key, meta in result.files.items()
-        },
+    return _to_generate_response(result)
+
+
+class AssemblyAddRequest(BaseModel):
+    specification: dict | None = Field(
+        default=None,
+        description="Current 3d_part or 3d_assembly spec; omit for an empty workspace.",
     )
+    component_type: str = Field(description="Registry component type, e.g. m3_screw.")
+    parameters: dict | None = Field(
+        default=None, description="Optional parameter overrides."
+    )
+    transform: dict | None = Field(
+        default=None, description="Optional {position:[x,y,z], rotation:[rx,ry,rz]}."
+    )
+    count: int = Field(default=1, ge=1, le=12, description="Repeated instances.")
+    name: str | None = Field(default=None, description="Optional display name.")
+
+
+class AssemblyRemoveRequest(BaseModel):
+    specification: dict
+    component_id: str
+
+
+class AssemblyUpdateRequest(BaseModel):
+    specification: dict
+    component_id: str
+    parameters: dict | None = None
+    transform: dict | None = None
+    visible: bool | None = None
+    name: str | None = None
+    instances: list[dict] | None = None
+
+
+def _parse_transform(raw: dict | None):
+    from .cad.assembly import Transform
+
+    if raw is None:
+        return None
+    return Transform.model_validate(raw)
+
+
+def _parse_instances(raw: list[dict] | None):
+    from .cad.assembly import Transform
+
+    if raw is None:
+        return None
+    return [Transform.model_validate(item) for item in raw]
+
+
+def _parse_current_spec(payload: dict | None):
+    from .services.assembly import parse_document
+
+    if payload is None:
+        return None
+    return parse_document(payload)
+
+
+@app.get("/components")
+def list_components():
+    """Deterministic component catalog. No AI, no CAD."""
+    from .cad import registry
+    from .cad.assembly import ASSEMBLY_SCHEMA_VERSION
+
+    return {
+        "schema_version": ASSEMBLY_SCHEMA_VERSION,
+        "components": registry.public_catalog(),
+    }
+
+
+@app.post(
+    "/assembly/add",
+    response_model=GenerateResponse,
+    responses={
+        400: {"description": "Invalid request."},
+        422: {"description": "Unknown component, bad parameters, or CAD validation."},
+        500: {"description": "CAD generation failure."},
+    },
+)
+def assembly_add(body: AssemblyAddRequest):
+    """Insert a registry component without calling the LLM."""
+    from .services import assembly as assembly_svc
+
+    request_id = uuid.uuid4().hex
+    try:
+        current = _parse_current_spec(body.specification)
+        result = assembly_svc.add_component(
+            current,
+            body.component_type,
+            parameters=body.parameters,
+            transform=_parse_transform(body.transform),
+            count=body.count,
+            name=body.name,
+            request_id=request_id,
+            file_store=file_store,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return _to_generate_response(result)
+
+
+@app.post(
+    "/assembly/remove",
+    response_model=GenerateResponse,
+    responses={
+        400: {"description": "Invalid request."},
+        422: {"description": "Unknown component or last-object removal."},
+        500: {"description": "CAD generation failure."},
+    },
+)
+def assembly_remove(body: AssemblyRemoveRequest):
+    """Remove one object from an assembly. No AI."""
+    from .services import assembly as assembly_svc
+
+    request_id = uuid.uuid4().hex
+    try:
+        current = _parse_current_spec(body.specification)
+        if current is None:
+            raise ValueError("specification is required.")
+        result = assembly_svc.remove_component(
+            current,
+            body.component_id,
+            request_id=request_id,
+            file_store=file_store,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return _to_generate_response(result)
+
+
+@app.post(
+    "/assembly/update",
+    response_model=GenerateResponse,
+    responses={
+        400: {"description": "Invalid request."},
+        422: {"description": "Unknown component or invalid parameters."},
+        500: {"description": "CAD generation failure."},
+    },
+)
+def assembly_update(body: AssemblyUpdateRequest):
+    """Update one component's parameters, pose, visibility, or name. No AI."""
+    from .services import assembly as assembly_svc
+
+    request_id = uuid.uuid4().hex
+    try:
+        current = _parse_current_spec(body.specification)
+        if current is None:
+            raise ValueError("specification is required.")
+        result = assembly_svc.update_component(
+            current,
+            body.component_id,
+            parameters=body.parameters,
+            transform=_parse_transform(body.transform),
+            visible=body.visible,
+            name=body.name,
+            instances=_parse_instances(body.instances),
+            request_id=request_id,
+            file_store=file_store,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return _to_generate_response(result)
 
 
 @app.get(

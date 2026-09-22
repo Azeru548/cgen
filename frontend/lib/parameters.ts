@@ -18,6 +18,7 @@ import type {
   CadOperation,
   CadSpecification,
   CylinderOperation,
+  DocumentSpecification,
   FilletFeature,
   HoleFeature,
 } from "@/types/api";
@@ -207,7 +208,8 @@ function filletParams(
 
 /** Derive the M8.1 parameter list. Empty = not parametrically adjustable
  *  (composite builds, unsupported ops/features) and the panel stays hidden. */
-export function extractParameters(spec: CadSpecification): ParameterDescriptor[] {
+export function extractParameters(spec: DocumentSpecification): ParameterDescriptor[] {
+  if (spec.document_type !== "3d_part") return [];
   const op = spec.operation;
   const build = op.type === "part" ? op.build : op;
   if (build.type !== "box" && build.type !== "cylinder") return [];
@@ -238,10 +240,13 @@ function cloneSpec(spec: CadSpecification): CadSpecification {
  *  are settable — there is no generic path setter. Throws on mismatch so
  *  a stale descriptor can never corrupt a spec. */
 export function applyParameter(
-  spec: CadSpecification,
+  spec: DocumentSpecification,
   target: ParameterTarget,
   value: number,
-): CadSpecification {
+): DocumentSpecification {
+  if (spec.document_type !== "3d_part") {
+    throw new Error("Part parameters only apply to a single generated part.");
+  }
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error("Parameter value must be a positive number.");
   }
@@ -304,11 +309,15 @@ function fmt(value: number): string {
 }
 
 /** Structural equality for preview reuse (Phase 7): same JSON, same spec. */
-export function specsEqualJson(a: CadSpecification, b: CadSpecification): boolean {
+export function specsEqualJson(
+  a: DocumentSpecification,
+  b: DocumentSpecification,
+): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function buildOf(spec: CadSpecification): BoxOperation | CylinderOperation | null {
+function buildOf(spec: DocumentSpecification): BoxOperation | CylinderOperation | null {
+  if (spec.document_type !== "3d_part") return null;
   const build = spec.operation.type === "part" ? spec.operation.build : spec.operation;
   return build.type === "box" || build.type === "cylinder" ? build : null;
 }
@@ -319,8 +328,8 @@ function buildOf(spec: CadSpecification): BoxOperation | CylinderOperation | nul
  * feature-only edits return identity/null until the debounced rebuild lands.
  */
 export function computeLiveScale(
-  from: CadSpecification,
-  to: CadSpecification,
+  from: DocumentSpecification,
+  to: DocumentSpecification,
 ): [number, number, number] | null {
   const a = buildOf(from);
   const b = buildOf(to);

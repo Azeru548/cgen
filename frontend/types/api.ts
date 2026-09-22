@@ -155,6 +155,48 @@ export interface CadSpecification {
   operation: CadOperation;
 }
 
+export type RelationshipType =
+  | "positioned_at"
+  | "attached_to"
+  | "aligned_with"
+  | "repeated_from"
+  | "mounted_on"
+  | "centered_on";
+
+export interface Transform {
+  position: [number, number, number];
+  rotation: [number, number, number];
+}
+
+export interface Relationship {
+  type: RelationshipType;
+  target_id: string;
+}
+
+export type ParamValue = number | boolean | string;
+
+export interface ComponentInstance {
+  id: string;
+  component_type: string;
+  name: string;
+  parameters: Record<string, ParamValue>;
+  transform: Transform;
+  visible: boolean;
+  instances: Transform[];
+  relationships: Relationship[];
+  generated?: CadSpecification | null;
+}
+
+export interface AssemblySpecification {
+  document_type: "3d_assembly";
+  units: "mm";
+  name: string;
+  schema_version: "4.0";
+  components: ComponentInstance[];
+}
+
+export type DocumentSpecification = CadSpecification | AssemblySpecification;
+
 export type CadFileFormat = "step" | "stl";
 
 export interface FileMetadata {
@@ -167,13 +209,49 @@ export interface FileMetadata {
 export interface GenerateResponse {
   status: "completed";
   request_id: string;
-  specification: CadSpecification;
+  specification: DocumentSpecification;
   units: string;
   generation_time_ms: number;
   files: {
     step: FileMetadata;
     stl: FileMetadata;
   };
+  component_files?: Record<string, { step: FileMetadata; stl: FileMetadata }>;
+}
+
+export type ComponentCategory =
+  | "geometry"
+  | "fasteners"
+  | "mechanical"
+  | "electronics"
+  | "templates";
+
+export interface CatalogParam {
+  key: string;
+  label: string;
+  kind: "length" | "count" | "choice" | "flag";
+  default: ParamValue;
+  min: number | null;
+  max: number | null;
+  options: string[] | null;
+  unit: string | null;
+  description: string;
+}
+
+export interface CatalogComponent {
+  type: string;
+  category: ComponentCategory;
+  display_name: string;
+  description: string;
+  insertable: boolean;
+  parameterized: boolean;
+  has_mounting_points: boolean;
+  parameters: CatalogParam[];
+}
+
+export interface ComponentsCatalog {
+  schema_version: string;
+  components: CatalogComponent[];
 }
 
 export interface BackendHealth {

@@ -18,6 +18,7 @@ interface InspectorProps {
   workspace: Workspace;
   onSelectRevision: (revisionId: string) => void;
   parametric?: ReactNode;
+  assembly?: ReactNode;
 }
 
 export function Inspector({
@@ -26,12 +27,14 @@ export function Inspector({
   workspace,
   onSelectRevision,
   parametric,
+  assembly,
 }: InspectorProps) {
   return (
     <>
       <div className="inspector-header">Inspector</div>
       <div className="inspector-body">
         <RevisionHistory workspace={workspace} onSelect={onSelectRevision} />
+        {assembly}
         {parametric}
         {result && status === "ready" ? (
           <SpecPanel result={result} />
@@ -39,7 +42,7 @@ export function Inspector({
           <div className="inspector-empty">
             {status === "generating"
               ? "Generating model..."
-              : "No specification yet. Describe a part and click Generate."}
+              : "No specification yet. Describe a part, or add a component."}
           </div>
         )}
         {result && status === "ready" ? <Downloads result={result} /> : null}

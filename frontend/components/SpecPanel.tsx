@@ -1,6 +1,7 @@
 "use client";
 
 import type { GenerateResponse } from "@/types/api";
+import { isAssemblySpec } from "@/lib/assembly";
 import {
   formatBytes,
   humanizeName,
@@ -17,6 +18,55 @@ interface SpecPanelProps {
 
 export function SpecPanel({ result }: SpecPanelProps) {
   const spec = result.specification;
+  if (isAssemblySpec(spec)) {
+    const totalBytes = result.files.step.bytes + result.files.stl.bytes;
+    return (
+      <section
+        className="panel"
+        aria-labelledby="spec-heading"
+        data-testid="spec-panel"
+      >
+        <h2 id="spec-heading" className="kicker">
+          <span className="kicker-index">02</span>
+          <span className="kicker-label">Specification</span>
+          <span className="kicker-rule" aria-hidden="true" />
+        </h2>
+        <p className="spec-name">{humanizeName(spec.name)}</p>
+        <dl className="spec-grid">
+          <div className="spec-row">
+            <dt>Type</dt>
+            <dd>Assembly</dd>
+          </div>
+          <div className="spec-row">
+            <dt>Objects</dt>
+            <dd className="mono">{spec.components.length}</dd>
+          </div>
+          <div className="spec-row">
+            <dt>Units</dt>
+            <dd>{result.units}</dd>
+          </div>
+          <div className="spec-row">
+            <dt>Generated</dt>
+            <dd className="mono">{result.generation_time_ms} ms</dd>
+          </div>
+        </dl>
+        <h3 className="spec-subtitle">Objects</h3>
+        <ul className="op-tree">
+          {spec.components.map((component) => (
+            <li key={component.id}>
+              <span className="mono">
+                {component.name} · {component.component_type}
+                {component.instances.length > 1
+                  ? ` × ${component.instances.length}`
+                  : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="spec-bytes mono">{formatBytes(totalBytes)}</p>
+      </section>
+    );
+  }
   const op = spec.operation;
   const dimensions = summarizeDimensions(op);
   const tree =

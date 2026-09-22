@@ -751,3 +751,34 @@ def export_box(
         "stl_bytes": stl_path.stat().st_size,
         "cadquery_version": get_cadquery_version(),
     }
+
+
+def apply_transform(solid, position: tuple[float, float, float], rotation: tuple[float, float, float]):
+    """Rotate XYZ Euler degrees about the origin, then translate (mm)."""
+    cq = _require_cq()
+    rx, ry, rz = rotation
+    origin = cq.Vector(0, 0, 0)
+    if rx:
+        solid = solid.rotate(origin, cq.Vector(1, 0, 0), rx)
+    if ry:
+        solid = solid.rotate(origin, cq.Vector(0, 1, 0), ry)
+    if rz:
+        solid = solid.rotate(origin, cq.Vector(0, 0, 1), rz)
+    x, y, z = position
+    if x or y or z:
+        solid = solid.translate(cq.Vector(x, y, z))
+    return solid
+
+
+def export_solids(solids: list, stem: str, out_dir: str | Path | None = None) -> dict:
+    """Export one or more solids as a STEP/STL compound (identity preserved)."""
+    if not solids:
+        raise ValueError("Nothing to export — the assembly has no solids.")
+    cq = _require_cq()
+    if len(solids) == 1:
+        compound = solids[0]
+    else:
+        compound = cq.Compound.makeCompound(solids)
+    result = _export_solid(compound, stem, out_dir)
+    result.update({"operation": "assembly", "units": "mm"})
+    return result

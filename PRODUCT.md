@@ -16,24 +16,27 @@ Broader creators and makers who want real CAD parts without deep CAD-software ex
 
 ## Product Purpose
 
-cgen turns natural-language part descriptions into validated 3D CAD models (STEP + STL). Success is: a creator describes a part, previews it, adjusts parameters, and downloads files they can use — without AI remaining in the loop for local parametric edits.
+cgen turns natural-language descriptions into validated 3D CAD. M9 adds a reusable component library and an assembly workspace: a creator can describe a kit (enclosure + board + screws), add library parts without AI, inspect each object, and export STEP/STL — while local numeric and placement edits stay off the LLM.
 
 ## Positioning
 
-Language-to-solid generation with a deterministic CadQuery engine, an append-only project/workspace/revision model, and a no-AI `/rebuild` path for dial-based numeric retunes. Neighboring chat-CAD tools stop at generation; cgen keeps a full revision history and local parametric control.
+Language-to-solid generation with a deterministic CadQuery engine, a versioned component registry, an append-only project/workspace/revision model, and no-AI paths for `/rebuild` and `/assembly/*`. The LLM interprets intent; the registry and engine produce geometry.
 
 ## Operating Context
 
-Single-page web workstation: prompt bar, WebGL viewport, inspector (spec, revisions, downloads), boot/engine status. Work happens in Project → Workspace → Revision sessions. Backend download tokens are short-lived; specs remain authoritative.
+Single-page web workstation: prompt bar, multi-object WebGL scene, inspector (assembly tree, component browser, spec, revisions, downloads), boot/engine status. Work happens in Project → Workspace → Revision sessions. Backend download tokens are short-lived; specs remain authoritative.
 
 ## Capabilities and Constraints
 
-- Generate and modify parts from natural language (LLM + schema validation)
-- Local parametric rebuild (box/cylinder dims, hole/fillet numbers) with no AI
+- Generate and modify single parts (schema v3.2) or assemblies (schema v4.0) from natural language
+- Deterministic component library (~25 types: geometry, fasteners, mechanical, electronics, enclosure template)
+- Add / remove / update / hide objects without calling the LLM
+- Multi-object scene: selection, per-object parameters, placement, visibility
+- Local parametric rebuild for single parts; assembly update/rebuild for library components
 - Append-only revisions; clear-viewer without data loss; multi-workspace project
-- STEP (authoritative) + STL (preview mesh) downloads
+- Combined STEP/STL export plus per-component files; objects stay logically separate (compound, not a boolean union)
 - Ephemeral file links (≈1h TTL); WebGL required for preview
-- Schema v3.2 operation/feature model; conservative client-side parameter ranges
+- No constraint solver, collision engine, real screw threads, or professional mating
 
 ## Brand Commitments
 
@@ -49,7 +52,7 @@ Working full-stack app in repo (frontend + backend + tests). No external marketi
 ## Product Principles
 
 1. Specs and revisions are append-only truth; UI never destroys history.
-2. Local numeric edits never call the AI; rebuild is deterministic and guarded.
+2. Local numeric edits, placement, visibility, and library inserts never call the AI; rebuild/assembly apply is deterministic and guarded.
 3. Preview stays usable while updates land — no blanking the model on every tick.
 4. Errors name the problem and the recovery path in plain language.
 5. Downloads (especially STEP) remain authoritative even when preview fails.

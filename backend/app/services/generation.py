@@ -28,6 +28,7 @@ import json
 
 from ..ai import groq_client
 from ..cad import cadquery_engine
+from ..cad.assembly import AssemblySpec
 from ..cad.schema import BoxOperation, CADSpec
 from .file_store import FileStore
 from .names import default_name_for, sanitize_name
@@ -57,6 +58,7 @@ class GenerationResult:
     units: str
     files: dict[str, GeneratedFile] = field(default_factory=dict)
     generation_time_ms: int = 0
+    component_files: dict[str, dict[str, GeneratedFile]] | None = None
 
 
 def _rename_to_stem(path: Path, stem: str, ext: str) -> Path:
@@ -108,6 +110,22 @@ def run_generation(
         ai_started = time.monotonic()
         spec = groq_client.parse_prompt_to_spec(prompt.strip())
         ai_ms = int((time.monotonic() - ai_started) * 1000)
+        if isinstance(spec, AssemblySpec):
+            from .assembly import export_assembly_document
+
+            logger.info(
+                "ai_spec_generated request_id=%s stem=%s document=3d_assembly "
+                "components=%d ai_ms=%d",
+                request_id,
+                spec.name,
+                len(spec.components),
+                ai_ms,
+            )
+            result = export_assembly_document(
+                spec, request_id=request_id, file_store=file_store
+            )
+            result.generation_time_ms = int((time.monotonic() - started) * 1000)
+            return result
         stem = sanitize_name(spec.name, fallback=spec.operation.type)
         if stem == "rectangular_block" and spec.operation.type != "box":
             # The model occasionally echoes the example name; fall back to a
@@ -368,6 +386,11 @@ def run_modification(
             f"instruction is too long (max {MAX_INSTRUCTION_LENGTH} characters)."
         )
 
+    if isinstance(current_spec, dict) and current_spec.get("document_type") == "3d_assembly":
+        return _run_assembly_modification(
+            current_spec, instruction, request_id=request_id, file_store=file_store
+        )
+
     old_spec = CADSpec.model_validate(current_spec)
 
     logger.info(
@@ -457,6 +480,96 @@ def run_modification(
     except Exception as e:
         logger.warning("modification_failed request_id=%s error=%s", request_id, e)
         raise
+
+
+def _run_assembly_modification(
+    current_spec: dict,
+    instruction: str,
+    *,
+    request_id: str,
+    file_store: FileStore,
+) -> GenerationResult:
+    """NL modification of an assembly: LLM plan, then registry + CAD."""
+    from ..cad.assembly import AssemblySpec, validate_registry
+    from .assembly import export_assembly_document
+
+    old_assembly = validate_registry(AssemblySpec.model_validate(current_spec))
+    logger.info(
+        "modification_started request_id=%s document=3d_assembly instruction_len=%d",
+        request_id,
+        len(instruction),
+    )
+    started = time.monotonic()
+    try:
+        ai_started = time.monotonic()
+        new_doc = groq_client.modify_spec(
+            json.dumps(current_spec, separators=(",", ":")),
+            instruction.strip(),
+        )
+        ai_ms = int((time.monotonic() - ai_started) * 1000)
+        if not isinstance(new_doc, AssemblySpec):
+            raise ModificationRejectedError(
+                "Modification of an assembly must return a 3d_assembly document, "
+                "not a single part."
+            )
+        new_assembly = validate_registry(new_doc)
+        _validate_assembly_modification(old_assembly, new_assembly, instruction)
+        logger.info(
+            "ai_modification_completed request_id=%s ai_ms=%d",
+            request_id,
+            ai_ms,
+        )
+        result = export_assembly_document(
+            new_assembly, request_id=request_id, file_store=file_store
+        )
+        result.generation_time_ms = int((time.monotonic() - started) * 1000)
+        logger.info(
+            "modification_completed request_id=%s total_ms=%d",
+            request_id,
+            result.generation_time_ms,
+        )
+        return result
+    except Exception as e:
+        logger.warning("modification_failed request_id=%s error=%s", request_id, e)
+        raise
+
+
+def _validate_assembly_modification(
+    old: AssemblySpec, new: AssemblySpec, instruction: str
+) -> None:
+    """Reject constant drift, unknown types (already validated), empty no-ops."""
+    if old.document_type != new.document_type or old.units != new.units:
+        raise ModificationRejectedError(
+            "Modification changed document_type or units, which must remain constant."
+        )
+    instruction_lower = instruction.lower().strip()
+    name_change_requested = any(
+        kw in instruction_lower
+        for kw in ["rename", "name it", "call it", "new name"]
+    )
+    if old.name != new.name and not name_change_requested:
+        raise ModificationRejectedError(
+            "Modification changed the assembly name without an explicit rename request."
+        )
+    if old.model_dump() == new.model_dump():
+        raise ModificationRejectedError("No changes detected in the specification.")
+    old_generated = {
+        c.id: c.generated for c in old.components if c.generated is not None
+    }
+    new_by_id = {c.id: c for c in new.components}
+    for cid, old_spec in old_generated.items():
+        new_c = new_by_id.get(cid)
+        if new_c is None or new_c.generated is None:
+            continue
+        if new_c.component_type != "generated_part":
+            raise ModificationRejectedError(
+                f"Modification changed generated_part '{cid}' to a different type."
+            )
+        if not _skeletons_compatible(old_spec.operation, new_c.generated.operation):
+            raise ModificationRejectedError(
+                f"Modification redesigns generated part '{cid}'. "
+                "Only numeric/feature parameter changes are allowed on generated parts."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -558,6 +671,22 @@ def run_rebuild(
     ValueError (422) for invalid specs or geometry, RuntimeError (500) for
     CAD/export failures. Groq is never imported, keyed, or called here.
     """
+    if (
+        isinstance(base_spec, dict)
+        and base_spec.get("document_type") == "3d_assembly"
+    ) or (
+        isinstance(updated_spec, dict)
+        and updated_spec.get("document_type") == "3d_assembly"
+    ):
+        from .assembly import parse_document, rebuild_assembly
+
+        return rebuild_assembly(
+            parse_document(base_spec),
+            parse_document(updated_spec),
+            request_id=request_id,
+            file_store=file_store,
+        )
+
     old_spec = CADSpec.model_validate(base_spec)
     new_spec = CADSpec.model_validate(updated_spec)
 

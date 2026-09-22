@@ -96,7 +96,10 @@ describe("useParametricSession", () => {
     await settle();
     pending[0].resolve(okResponse(lastBodySpec(), "prev-1"));
     await settle(0);
-    expect(result.current.preview?.spec.operation).toMatchObject({ width: 120 });
+    expect(result.current.preview?.spec.document_type).toBe("3d_part");
+    if (result.current.preview?.spec.document_type === "3d_part") {
+      expect(result.current.preview.spec.operation).toMatchObject({ width: 120 });
+    }
     expect(result.current.preview?.response.request_id).toBe("prev-1");
     expect(result.current.paramError).toBeNull();
     expect(calls).toBe(1);
@@ -138,7 +141,10 @@ describe("useParametricSession", () => {
     await settle(0);
     pending[0].resolve(okResponse(editedBox(110), "prev-1"));
     await settle(0);
-    expect(result.current.preview?.spec.operation).toMatchObject({ width: 120 });
+    expect(result.current.preview?.spec.document_type).toBe("3d_part");
+    if (result.current.preview?.spec.document_type === "3d_part") {
+      expect(result.current.preview.spec.operation).toMatchObject({ width: 120 });
+    }
     expect(result.current.preview?.response.request_id).toBe("prev-2");
   });
 
@@ -175,7 +181,10 @@ describe("useParametricSession", () => {
     await settle(0);
     expect(result.current.paramError).toContain("Rebuild changes");
     // Last valid preview geometry is preserved, not cleared.
-    expect(result.current.preview?.spec.operation).toMatchObject({ width: 120 });
+    expect(result.current.preview?.spec.document_type).toBe("3d_part");
+    if (result.current.preview?.spec.document_type === "3d_part") {
+      expect(result.current.preview.spec.operation).toMatchObject({ width: 120 });
+    }
   });
 
   it("commit after further edits performs exactly one final rebuild", async () => {

@@ -18,6 +18,7 @@ import os
 
 from pydantic import ValidationError
 
+from ..cad.assembly import AssemblySpec, validate_registry
 from ..cad.schema import CADSpec
 
 logger = logging.getLogger(__name__)
@@ -139,7 +140,63 @@ Prefer "part" with hole features for holes on box-like builds.
 Return EXACTLY this top-level shape (operation varies as above):
 {"document_type": "3d_part", "units": "mm", "name": "rectangular_block",
  "operation": {"type": "box", "width": 100, "depth": 60, "height": 30}}
+
+ASSEMBLY MODE (document_type "3d_assembly"):
+Use an assembly when the user wants MULTIPLE separately identifiable objects
+in one workspace (enclosure + board + screws + lid, etc.). Do NOT boolean-union
+them. If the request is a single solid, keep returning 3d_part as above.
+
+Assembly JSON shape:
+{"document_type": "3d_assembly", "units": "mm", "name": "arduino_enclosure",
+ "schema_version": "4.0",
+ "components": [
+   {"id": "arduino_1", "component_type": "arduino_uno", "name": "Arduino Uno",
+    "parameters": {}, "transform": {"position": [0, 0, 8], "rotation": [0, 0, 0]},
+    "visible": true, "instances": [],
+    "relationships": [{"type": "centered_on", "target_id": "enclosure_1"}]},
+   {"id": "enclosure_1", "component_type": "enclosure", "name": "Enclosure",
+    "parameters": {"width": 90, "depth": 70, "height": 40, "wall_thickness": 2.5,
+                   "board": "arduino_uno", "usb_cutout": true},
+    "transform": {"position": [0, 0, 0], "rotation": [0, 0, 0]},
+    "visible": true, "instances": [], "relationships": []},
+   {"id": "lid_1", "component_type": "enclosure_lid", "name": "Lid",
+    "parameters": {"width": 90, "depth": 70, "thickness": 2.5},
+    "transform": {"position": [0, 0, 21.25], "rotation": [0, 0, 0]},
+    "visible": true, "instances": [], "relationships": []},
+   {"id": "screws_1", "component_type": "m3_screw", "name": "M3 screws",
+    "parameters": {"length": 12},
+    "transform": {"position": [0, 0, 0], "rotation": [0, 0, 0]},
+    "visible": true, "instances": [],
+    "relationships": [{"type": "mounted_on", "target_id": "arduino_1"}]}
+ ]}
+
+Rules for assemblies:
+- component_type MUST be one of the registry types listed below. NEVER invent types.
+- id must be a lowercase slug: letter then letters/digits/underscores, unique in the list.
+- Do NOT include a "generated" field unless component_type is "generated_part".
+- Prefer library components (enclosure, arduino_uno, m3_screw) over generated_part.
+- Use one m3_screw (or similar) with relationship mounted_on / repeated_from for
+  repeated fasteners — do NOT emit four separate screw components.
+- relationships.target_id must refer to another component in this list.
+- Allowed relationship types: positioned_at, attached_to, aligned_with,
+  repeated_from, mounted_on, centered_on.
+- transforms: position in mm, rotation in XYZ Euler degrees.
+- At most 24 components. At most 12 instances per component.
+- If the board cannot physically fit, still return the assembly with a larger
+  enclosure rather than omitting the board.
+
+REGISTRY (authoritative; only these component_type values are legal):
 """
+
+
+def _assembly_prompt_suffix() -> str:
+    from ..cad import registry
+
+    return registry.prompt_catalog()
+
+
+def _system_prompt() -> str:
+    return SYSTEM_PROMPT + _assembly_prompt_suffix()
 
 
 class GroqConfigError(RuntimeError):
@@ -282,7 +339,7 @@ def _describe_request_error(exc: BaseException, model: str) -> str:
     return f"Groq API error ({status}{code_hint}).{suffix}" or "Groq request failed."
 
 
-def parse_prompt_to_spec(prompt: str, *, client=None) -> CADSpec:
+def parse_prompt_to_spec(prompt: str, *, client=None) -> CADSpec | AssemblySpec:
     """Translate a natural-language prompt into a validated CADSpec.
 
     `client` is injectable for tests (any object exposing
@@ -297,7 +354,7 @@ def parse_prompt_to_spec(prompt: str, *, client=None) -> CADSpec:
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": _system_prompt()},
                 {"role": "user", "content": prompt},
             ],
             temperature=0,
@@ -334,7 +391,7 @@ def parse_prompt_to_spec(prompt: str, *, client=None) -> CADSpec:
         ) from e
 
     try:
-        return CADSpec.model_validate(data)
+        return _validate_document(data)
     except ValidationError as e:
         details = "; ".join(
             f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}"
@@ -343,6 +400,16 @@ def parse_prompt_to_spec(prompt: str, *, client=None) -> CADSpec:
         raise SpecValidationError(
             f"AI specification failed validation: {details}"
         ) from e
+    except ValueError as e:
+        raise SpecValidationError(f"AI specification failed validation: {e}") from e
+
+
+def _validate_document(data: object) -> CADSpec | AssemblySpec:
+    if not isinstance(data, dict):
+        raise SpecValidationError("AI specification was not a JSON object.")
+    if data.get("document_type") == "3d_assembly":
+        return validate_registry(AssemblySpec.model_validate(data))
+    return CADSpec.model_validate(data)
 
 
 MODIFY_SYSTEM_PROMPT = """You modify an existing JSON CAD specification based on a natural-language instruction.
@@ -394,12 +461,38 @@ class SpecModificationError(RuntimeError):
     """Modification LLM call failed or returned unusable output."""
 
 
+ASSEMBLY_MODIFY_PROMPT = """You modify an existing JSON assembly specification based on a natural-language instruction.
+
+You receive:
+1. The current valid 3d_assembly specification (JSON).
+2. A modification instruction from the user.
+
+Return a modified 3d_assembly that follows the same schema.
+
+Rules:
+- Return JSON ONLY. No markdown, no explanation, no code fences, no executable code.
+- Preserve document_type "3d_assembly", units "mm", and schema_version "4.0".
+- Preserve the name unless the instruction explicitly asks to rename.
+- component_type MUST stay a registry type. NEVER invent types.
+- You MAY change numeric parameters, transforms, visibility, and names.
+- You MAY add library components the instruction asks for (enclosure, screws, lid, boards).
+- You MAY remove a component the instruction asks to delete.
+- For repeated fasteners, keep ONE component with relationship mounted_on / repeated_from
+  rather than duplicating definitions.
+- Do NOT boolean-union separate objects.
+- generated_part nested specs: only numeric/feature parameter changes; do not redesign them.
+- At most 24 components.
+
+Return the full modified 3d_assembly JSON.
+"""
+
+
 def modify_spec(
     current_spec_json: str,
     instruction: str,
     *,
     client=None,
-) -> CADSpec:
+) -> CADSpec | AssemblySpec:
     """Modify an existing CAD spec based on a natural-language instruction.
 
     `current_spec_json` is the JSON-serialized current CADSpec.
@@ -416,12 +509,24 @@ def modify_spec(
         f"Current specification:\n{current_spec_json}\n\n"
         f"Modification instruction:\n{instruction}"
     )
+    is_assembly = False
+    try:
+        parsed_current = json.loads(current_spec_json)
+        is_assembly = (
+            isinstance(parsed_current, dict)
+            and parsed_current.get("document_type") == "3d_assembly"
+        )
+    except Exception:
+        is_assembly = False
+    system = ASSEMBLY_MODIFY_PROMPT if is_assembly else MODIFY_SYSTEM_PROMPT
+    if is_assembly:
+        system = system + "\nREGISTRY:\n" + _assembly_prompt_suffix()
 
     try:
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": MODIFY_SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": user_content},
             ],
             temperature=0,
@@ -452,7 +557,7 @@ def modify_spec(
         ) from e
 
     try:
-        return CADSpec.model_validate(data)
+        return _validate_document(data)
     except ValidationError as e:
         details = "; ".join(
             f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}"
@@ -460,4 +565,8 @@ def modify_spec(
         )
         raise SpecValidationError(
             f"Modified specification failed validation: {details}"
+        ) from e
+    except ValueError as e:
+        raise SpecValidationError(
+            f"Modified specification failed validation: {e}"
         ) from e
