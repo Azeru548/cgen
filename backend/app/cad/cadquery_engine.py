@@ -178,10 +178,26 @@ def make_polygon_prism(sides: int, circumradius: float, height: float):
     return solid.translate(cq.Vector(0, 0, -height / 2))
 
 
+def as_shape(obj):
+    """Return a CadQuery Shape suitable for OCC boolean ops.
+
+    `cut`/`fuse`/`intersect` read `.wrapped` on a Shape. A Workplane is a
+    builder (the Milestone 1 `make_box` return type) and has no `.wrapped`;
+    unwrap it with `.val()` the same way `make_polygon_prism` does.
+    """
+    cq = _require_cq()
+    if isinstance(obj, cq.Workplane):
+        val = obj.val()
+        if val is None:
+            raise ValueError("Workplane has no solid to operate on")
+        return val
+    return obj
+
+
 def union(base, tool):
     """Boolean union: result = base + tool. Inputs are CadQuery shapes."""
     try:
-        return base.fuse(tool)
+        return as_shape(base).fuse(as_shape(tool))
     except Exception as e:
         raise RuntimeError(f"Boolean union failed: {e}") from e
 
@@ -194,7 +210,7 @@ def intersect(base, tool):
     (mapped to HTTP 422) instead of silently exporting nothing.
     """
     try:
-        result = base.intersect(tool)
+        result = as_shape(base).intersect(as_shape(tool))
     except Exception as e:
         raise RuntimeError(f"Boolean intersection failed: {e}") from e
     try:
@@ -212,7 +228,7 @@ def intersect(base, tool):
 def cut(base, tool):
     """Boolean subtraction: result = base - tool. Inputs are CadQuery shapes."""
     try:
-        return base.cut(tool)
+        return as_shape(base).cut(as_shape(tool))
     except Exception as e:
         raise RuntimeError(f"Boolean cut failed: {e}") from e
 
@@ -756,6 +772,7 @@ def export_box(
 def apply_transform(solid, position: tuple[float, float, float], rotation: tuple[float, float, float]):
     """Rotate XYZ Euler degrees about the origin, then translate (mm)."""
     cq = _require_cq()
+    solid = as_shape(solid)
     rx, ry, rz = rotation
     origin = cq.Vector(0, 0, 0)
     if rx:
@@ -775,10 +792,11 @@ def export_solids(solids: list, stem: str, out_dir: str | Path | None = None) ->
     if not solids:
         raise ValueError("Nothing to export — the assembly has no solids.")
     cq = _require_cq()
-    if len(solids) == 1:
-        compound = solids[0]
+    shapes = [as_shape(s) for s in solids]
+    if len(shapes) == 1:
+        compound = shapes[0]
     else:
-        compound = cq.Compound.makeCompound(solids)
+        compound = cq.Compound.makeCompound(shapes)
     result = _export_solid(compound, stem, out_dir)
     result.update({"operation": "assembly", "units": "mm"})
     return result

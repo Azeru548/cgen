@@ -187,9 +187,15 @@ def _union(base, tool):
 
 
 def _box(w: float, d: float, h: float):
-    from .cadquery_engine import make_box
+    """Origin-centered box Solid — same convention as build_operation(Box).
 
-    return make_box(w, d, h)
+    Do not use cadquery_engine.make_box here: that Milestone 1 helper
+    returns a Workplane, which boolean cut/fuse cannot consume.
+    """
+    cq = _require_cq()
+    if min(w, d, h) <= 0:
+        raise ValueError("Box dimensions must be positive")
+    return cq.Solid.makeBox(w, d, h, pnt=cq.Vector(-w / 2, -d / 2, -h / 2))
 
 
 def _cyl(r: float, h: float):
