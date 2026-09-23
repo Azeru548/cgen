@@ -60,7 +60,7 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
       aria-label="Component library"
       data-testid="component-browser"
     >
-      <span className="palette-label">Library</span>
+      <span className="palette-label">Model library</span>
       <div className="palette-cats">
         {CATEGORIES.map((cat) => {
           const items = grouped.get(cat.id) ?? [];
@@ -115,7 +115,6 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
           );
         })}
       </div>
-      <span className="palette-hint">Add from the library — no AI required.</span>
     </nav>
   );
 }

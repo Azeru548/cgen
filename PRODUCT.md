@@ -24,7 +24,7 @@ Language-to-solid generation with a deterministic CadQuery engine, a versioned c
 
 ## Operating Context
 
-Single-page web workstation: prompt bar, multi-object WebGL scene, component library palette, inspector (assembly tree, spec, revisions, downloads), boot checks. Work happens in Project → Workspace → Revision sessions. Backend download tokens are short-lived; specs remain authoritative.
+Single-page web workstation: one top bar (logo, model library, Workspace, Clear viewer), prompt bar, multi-object WebGL scene, inspector (assembly tree, spec, revisions, downloads), boot checks. Work happens in Project → Workspace → Revision sessions. Backend download tokens are short-lived; specs remain authoritative.
 
 ## Capabilities and Constraints
 

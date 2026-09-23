@@ -312,6 +312,10 @@ export async function updateAssemblyComponent(
     transform?: { position: [number, number, number]; rotation: [number, number, number] };
     visible?: boolean;
     name?: string;
+    instances?: Array<{
+      position: [number, number, number];
+      rotation: [number, number, number];
+    }>;
   },
   signal?: AbortSignal,
 ): Promise<GenerateResponse> {

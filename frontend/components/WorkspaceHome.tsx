@@ -25,11 +25,12 @@ function hueFrom(id: string, name: string): number {
 
 function coverStyle(ws: Workspace): React.CSSProperties {
   const h = hueFrom(ws.id, ws.name);
-  const h2 = (h + 48) % 360;
-  const h3 = (h + 12) % 360;
+  const hue = 214 + (h % 36);
+  const h2 = (hue - 14 + 360) % 360;
+  const h3 = (hue + 22) % 360;
   return {
-    ["--tray-h" as string]: String(h),
-    background: `linear-gradient(145deg, hsl(${h} 68% 58%), hsl(${h2} 72% 42%) 55%, hsl(${h3} 55% 30%))`,
+    ["--tray-h" as string]: String(hue),
+    background: `linear-gradient(145deg, hsl(${hue} 82% 54%), hsl(${h2} 88% 42%) 55%, hsl(${h3} 75% 30%))`,
   };
 }
 
@@ -44,25 +45,20 @@ export function WorkspaceHome({
   return (
     <div className="home" data-testid="workspace-home">
       <header className="home-topbar">
-        <div className="brand">
+        <div className="brand brand-mark">
           <Image
             src="/logo-removebg.png"
-            alt="cgen logo"
-            width={36}
-            height={36}
+            alt="cgen"
+            width={56}
+            height={56}
             className="brand-logo"
             priority
           />
-          <span className="brand-text">
-            <strong>cgen</strong>
-            <small>AI CAD generator</small>
-          </span>
         </div>
       </header>
 
       <main className="home-main">
         <div className="home-intro">
-          <p className="home-eyebrow">{project.name}</p>
           <h1 className="home-title">Open a workspace</h1>
           <p className="home-sub">
             Pick a tray to continue a model, or start a fresh workspace for a new part.

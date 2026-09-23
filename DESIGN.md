@@ -7,7 +7,7 @@
 - **Thesis:** cgen is an open making-kit — color-coded compartments and a landing shelf of project trays; refuses monochrome brutalist CAD chrome.
 - **Own-world:** warm ivory canvas, white surfaces, coral/cobalt/mint/amber roles, 12–20px radii, Bricolage Grotesque + IBM Plex Mono for measurements only.
 - **Story:** creator lands on the tray shelf, opens a workspace, describes a part or assembly, adds library components, previews the scene, inspects objects, and downloads — color marks the compartment.
-- **First viewport:** tray cards + create action; workspace: fixed app shell — topbar, session pills, component library palette, rounded multi-object viewport + independently scrollable inspector, fixed prompt composer.
+- **First viewport:** tray cards + create action; workspace: one compact top bar (logo, model library, Workspace, Clear viewer) + rounded multi-object viewport + independently scrollable inspector, fixed prompt composer.
 - **Form:** assigned direction “Open Kit”, seed `b5593edb` (degraded roll, no challengers).
 - **Finish:** unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md.
 
@@ -55,15 +55,15 @@ Scale (approx): home title `clamp(1.85rem, 4vw, 2.75rem)` · body `0.95–1.02re
 ## Surfaces
 
 1. **Home (`WorkspaceHome`)** — shelf of workspace trays: gradient + blur covers, white titles, create tray with coral `+`.
-2. **Workspace (`page.tsx`)** — fixed 100dvh shell: topbar (logo → home), session pills, component library palette, rounded 3D viewport (multi-object, cobalt selection) + independently scrollable inspector, fixed prompt card with coral Generate.
+2. **Workspace (`page.tsx`)** — fixed 100dvh shell: single top bar (logo alone → home, model library dropdowns, Workspace, Clear viewer), rounded 3D viewport (multi-object, cobalt selection) + independently scrollable inspector, fixed prompt card with coral Generate.
 
 ## Components
 
-Trays, session tabs, revision items, component library palette, prompt bar, generate button, parametric dials, assembly tree, object placement fields, file rows, download buttons, viewport overlays — all inherit Open Kit tokens above.
+Trays, revision items, model library palette, prompt bar, generate button, parametric dials, assembly tree, object placement fields, file rows, download buttons, viewport overlays — all inherit Open Kit tokens above.
 
 ## Assembly interaction (M9)
 
-- **Component library** is a horizontal palette above the workspace body. Categories (Geometry / Fasteners / Mechanical / Electronics / Templates) open as compact CAD-style dropdown overlays — only one open, shell height fixed. Coral pill **Add** inserts a registry component with no LLM call.
+- **Model library** lives in the single top bar. Categories (Geometry / Fasteners / Mechanical / Electronics / Templates) open as compact CAD-style dropdown overlays — only one open, shell height fixed. Coral pill **Add** inserts a registry component with no LLM call.
 - **Inspector** is the sole vertical scroll region in the workspace; header sticks while content scrolls.
 - **Assembly tree** lists named objects; selection is shared with the viewport (cobalt highlight). Eye toggle is a preview; **Apply placement** commits visibility, name, and transform as one revision.
 - **Object inspector** shows name, XYZ mm / Euler degrees, and registry parameters. Parameter apply is mint; placement apply is cobalt. Neither writes a revision until the explicit button.

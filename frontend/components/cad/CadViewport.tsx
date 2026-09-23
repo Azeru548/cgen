@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useState } from "react";
+import { Suspense, useCallback, useRef, useState } from "react";
 import * as THREE from "three";
 import { Canvas } from "@react-three/fiber";
 import {
@@ -8,6 +8,7 @@ import {
   GizmoViewport,
   Grid,
   OrbitControls,
+  TransformControls,
 } from "@react-three/drei";
 import { FrameCamera, StlModel, type PreviewState } from "./StlModel";
 import { GenerationLoader } from "../GenerationLoader";
@@ -44,6 +45,127 @@ interface CadViewportProps {
   schemaVersion?: string;
   /** Immediate dial-drag scale applied to the current mesh. */
   liveScale?: [number, number, number] | null;
+  /** Drag selected object → world translation delta (mm). Draft only. */
+  onMoveDelta?: (delta: [number, number, number]) => void;
+  /** Drag began — parent can freeze other inputs. */
+  onMoveStart?: () => void;
+  /** Drag ended — bake drafts; parent may reset the drag group. */
+  onMoveEnd?: () => void;
+  /** When false, no TransformControls (busy / no selection). */
+  canDrag?: boolean;
+}
+
+function DragGroup({
+  objects,
+  canDrag,
+  onMoveDelta,
+  onMoveStart,
+  onMoveEnd,
+  onGeometry,
+  onPreviewStatus,
+  onSelectObject,
+  liveScale,
+  contentRev,
+  resetSignal,
+  floorY,
+  hasContent,
+}: {
+  objects: SceneViewObject[];
+  canDrag: boolean;
+  onMoveDelta?: (delta: [number, number, number]) => void;
+  onMoveStart?: () => void;
+  onMoveEnd?: () => void;
+  onGeometry: () => void;
+  onPreviewStatus: (state: PreviewState, message?: string) => void;
+  onSelectObject?: (id: string | null) => void;
+  liveScale?: [number, number, number] | null;
+  contentRev: number;
+  resetSignal: number;
+  floorY: (y: number) => void;
+  hasContent: boolean;
+}) {
+  const [outerNode, setOuterNode] = useState<THREE.Group | null>(null);
+  const dragRef = useRef<THREE.Group>(null);
+  const [dragNode, setDragNode] = useState<THREE.Group | null>(null);
+  const draggingRef = useRef(false);
+
+  const selectedList = objects.filter((o) => o.selected && o.url.length > 0);
+  const rest = objects.filter((o) => !(o.selected && o.url.length > 0));
+
+  const handleDragEnd = useCallback(() => {
+    draggingRef.current = false;
+    dragRef.current?.position.set(0, 0, 0);
+    onMoveEnd?.();
+  }, [onMoveEnd]);
+
+  const handleObjectChange = useCallback(() => {
+    if (!draggingRef.current) return;
+    const group = dragRef.current;
+    if (!group || !onMoveDelta) return;
+    onMoveDelta([group.position.x, group.position.y, group.position.z]);
+  }, [onMoveDelta]);
+
+  const showGizmo = canDrag && selectedList.length > 0;
+
+  const renderPoses = (object: SceneViewObject) => {
+    const poses =
+      object.instances.length > 0
+        ? object.instances
+        : [{ position: object.position, rotation: object.rotation }];
+    return poses.map((pose, index) => (
+      <StlModel
+        key={`${object.id}:${index}`}
+        url={object.url}
+        onStatus={onPreviewStatus}
+        onGeometry={onGeometry}
+        scale={liveScale}
+        position={pose.position}
+        rotationDeg={pose.rotation}
+        recenter={object.recenter}
+        selected={object.selected}
+        objectId={object.id}
+        onSelect={onSelectObject}
+      />
+    ));
+  };
+
+  return (
+    <group ref={setOuterNode}>
+      {rest.map((object) => renderPoses(object))}
+
+      <group
+        ref={(node) => {
+          dragRef.current = node;
+          setDragNode(node);
+        }}
+        position={[0, 0, 0]}
+      >
+        {selectedList.map((object) => renderPoses(object))}
+      </group>
+
+      {showGizmo && dragNode ? (
+        <TransformControls
+          object={dragNode}
+          mode="translate"
+          size={0.85}
+          onMouseDown={() => {
+            draggingRef.current = true;
+            onMoveStart?.();
+          }}
+          onMouseUp={handleDragEnd}
+          onObjectChange={handleObjectChange}
+        />
+      ) : null}
+
+      <FrameCamera
+        group={outerNode}
+        contentRev={contentRev}
+        resetSignal={resetSignal}
+        floorY={floorY}
+        hasContent={hasContent}
+      />
+    </group>
+  );
 }
 
 export function CadViewport({
@@ -55,8 +177,11 @@ export function CadViewport({
   onSelectObject,
   schemaVersion,
   liveScale,
+  onMoveDelta,
+  onMoveStart,
+  onMoveEnd,
+  canDrag = false,
 }: CadViewportProps) {
-  const [sceneRoot, setSceneRoot] = useState<THREE.Group | null>(null);
   const [contentRev, setContentRev] = useState(0);
   const [resetSignal, setResetSignal] = useState(0);
   const [floorY, setFloorY] = useState(0);
@@ -79,39 +204,23 @@ export function CadViewport({
         <directionalLight position={[120, 180, 90]} intensity={1.35} />
         <directionalLight position={[-100, 60, -120]} intensity={0.45} />
         <Suspense fallback={null}>
-          <group
-            ref={setSceneRoot}
-            onPointerMissed={() => onSelectObject?.(null)}
-          >
-            {visible.map((object) => {
-              const poses =
-                object.instances.length > 0
-                  ? object.instances
-                  : [{ position: object.position, rotation: object.rotation }];
-              return poses.map((pose, index) => (
-                <StlModel
-                  key={`${object.id}:${index}`}
-                  url={object.url}
-                  onStatus={onPreviewStatus}
-                  onGeometry={handleGeometry}
-                  scale={liveScale}
-                  position={pose.position}
-                  rotationDeg={pose.rotation}
-                  recenter={object.recenter}
-                  selected={object.selected}
-                  objectId={object.id}
-                  onSelect={onSelectObject}
-                />
-              ));
-            })}
+          <group onPointerMissed={() => onSelectObject?.(null)}>
+            <DragGroup
+              objects={visible}
+              canDrag={canDrag && !busy}
+              onMoveDelta={onMoveDelta}
+              onMoveStart={onMoveStart}
+              onMoveEnd={onMoveEnd}
+              onGeometry={handleGeometry}
+              onPreviewStatus={onPreviewStatus}
+              onSelectObject={onSelectObject}
+              liveScale={liveScale}
+              contentRev={contentRev}
+              resetSignal={resetSignal}
+              floorY={handleFloorY}
+              hasContent={visible.length > 0}
+            />
           </group>
-          <FrameCamera
-            group={sceneRoot}
-            contentRev={contentRev}
-            resetSignal={resetSignal}
-            floorY={handleFloorY}
-            hasContent={visible.length > 0}
-          />
           <Grid
             position={[0, floorY, 0]}
             args={[10, 10]}
@@ -148,6 +257,7 @@ export function CadViewport({
       <div className="viewport-toolbar">
         <span className="viewport-hint">
           drag&nbsp;·&nbsp;orbit&nbsp;&nbsp;&nbsp;wheel&nbsp;·&nbsp;zoom&nbsp;&nbsp;&nbsp;right-drag&nbsp;·&nbsp;pan
+          {canDrag ? <>&nbsp;&nbsp;&nbsp;drag object&nbsp;·&nbsp;move</> : null}
         </span>
         <button
           type="button"

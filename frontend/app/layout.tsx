@@ -27,7 +27,7 @@ export default function RootLayout({
 THESIS: cgen is an open making-kit — color-coded compartments and a landing shelf of project trays; refuses monochrome brutalist CAD chrome.
 OWN-WORLD: warm ivory canvas, white surfaces, coral/cobalt/mint/amber roles, 12–20px radii, Bricolage Grotesque + Plex Mono for measurements only.
 STORY: creator lands on the tray shelf, opens a workspace, describes a part, previews it, inspects and downloads — color marks the compartment.
-FIRST VIEWPORT: tray cards + create action; workspace view: topbar, session pills, rounded viewport + inspector, generate full-height on prompt.
+FIRST VIEWPORT: tray cards + create action; workspace view: one top bar (logo, model library, Workspace, Clear viewer), rounded viewport + inspector, fixed prompt composer.
 FORM: assigned direction "Open Kit", seed b5593edb.
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md.
 */}

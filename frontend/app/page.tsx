@@ -50,7 +50,6 @@ import type { Project } from "@/types/revisions";
 type PageStatus = "idle" | "generating" | "ready" | "error";
 type AppView = "home" | "workspace";
 
-const SCHEMA_VERSION = "SCHEMA 4.0";
 const MAX_PROMPT_LENGTH = 2000;
 
 function detectWebgl(): boolean {
@@ -99,6 +98,17 @@ export default function Home() {
     0, 0, 0,
   ]);
   const [draftParams, setDraftParams] = useState<Record<string, ParamValue>>({});
+  const [draftInstances, setDraftInstances] = useState<
+    Array<{ position: [number, number, number]; rotation: [number, number, number] }>
+  >([]);
+  const [moving, setMoving] = useState(false);
+  const [moveOrigin, setMoveOrigin] = useState<{
+    position: [number, number, number];
+    instances: Array<{
+      position: [number, number, number];
+      rotation: [number, number, number];
+    }>;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -184,6 +194,14 @@ export default function Home() {
     [objects, activeSelectedId],
   );
 
+  const instancesDirty = useMemo(() => {
+    if (selectedObject === null) return false;
+    if (draftInstances.length === 0 && selectedObject.instances.length === 0) {
+      return false;
+    }
+    return JSON.stringify(draftInstances) !== JSON.stringify(selectedObject.instances);
+  }, [selectedObject, draftInstances]);
+
   const placementDirty = useMemo(() => {
     if (selectedObject === null) return false;
     const visChanged = Object.prototype.hasOwnProperty.call(
@@ -198,6 +216,7 @@ export default function Home() {
       draftRotation[0] !== selectedObject.transform.rotation[0] ||
       draftRotation[1] !== selectedObject.transform.rotation[1] ||
       draftRotation[2] !== selectedObject.transform.rotation[2] ||
+      instancesDirty ||
       visChanged
     );
   }, [
@@ -205,6 +224,7 @@ export default function Home() {
     draftName,
     draftPosition,
     draftRotation,
+    instancesDirty,
     visibilityDraft,
   ]);
 
@@ -212,6 +232,47 @@ export default function Home() {
     if (selectedObject === null) return false;
     return JSON.stringify(draftParams) !== JSON.stringify(selectedObject.parameters);
   }, [selectedObject, draftParams]);
+
+  const handleMoveStart = useCallback(() => {
+    if (selectedObject === null) return;
+    setMoving(true);
+    setMoveOrigin({
+      position: [...draftPosition] as [number, number, number],
+      instances: draftInstances.map((inst) => ({
+        position: [...inst.position] as [number, number, number],
+        rotation: [...inst.rotation] as [number, number, number],
+      })),
+    });
+  }, [selectedObject, draftPosition, draftInstances]);
+
+  const handleMoveDelta = useCallback(
+    (delta: [number, number, number]) => {
+      if (moveOrigin === null) return;
+      setDraftPosition([
+        moveOrigin.position[0] + delta[0],
+        moveOrigin.position[1] + delta[1],
+        moveOrigin.position[2] + delta[2],
+      ]);
+      if (moveOrigin.instances.length > 0) {
+        setDraftInstances(
+          moveOrigin.instances.map((inst) => ({
+            position: [
+              inst.position[0] + delta[0],
+              inst.position[1] + delta[1],
+              inst.position[2] + delta[2],
+            ] as [number, number, number],
+            rotation: inst.rotation,
+          })),
+        );
+      }
+    },
+    [moveOrigin],
+  );
+
+  const handleMoveEnd = useCallback(() => {
+    setMoving(false);
+    setMoveOrigin(null);
+  }, []);
 
   // Instant dial feedback: scale the currently displayed mesh toward the
   // edited spec while a rebuild is pending. Cleared when the preview lands
@@ -228,6 +289,8 @@ export default function Home() {
   }, [sessionKey, resetParamSession]);
 
   const hydrateDrafts = useCallback((object: SceneObject) => {
+    setMoving(false);
+    setMoveOrigin(null);
     setDraftName(object.name);
     setDraftPosition([
       object.transform.position[0],
@@ -240,6 +303,12 @@ export default function Home() {
       object.transform.rotation[2],
     ]);
     setDraftParams({ ...object.parameters });
+    setDraftInstances(
+      object.instances.map((inst) => ({
+        position: [...inst.position] as [number, number, number],
+        rotation: [...inst.rotation] as [number, number, number],
+      })),
+    );
   }, []);
 
   const handleSelectObject = useCallback(
@@ -385,6 +454,7 @@ export default function Home() {
           name: draftName,
           transform: { position: draftPosition, rotation: draftRotation },
           visible: vis,
+          ...(draftInstances.length > 0 ? { instances: draftInstances } : {}),
         },
         abortRef.current?.signal,
       ),
@@ -396,6 +466,7 @@ export default function Home() {
     draftName,
     draftPosition,
     draftRotation,
+    draftInstances,
     visibilityDraft,
     commitAssembly,
   ]);
@@ -448,20 +519,6 @@ export default function Home() {
     setPreviewError(null);
     setStatus("idle");
   }, []);
-
-  const handleSelectWorkspace = useCallback(
-    (workspaceId: string) => {
-      setProject((p) => {
-        const next = switchWorkspace(p, workspaceId);
-        const target = getActiveWorkspace(next);
-        setGenerateError(null);
-        setPreviewError(null);
-        setStatus(visibleRevision(target) === null ? "idle" : "ready");
-        return next;
-      });
-    },
-    [],
-  );
 
   const handleSelectRevision = useCallback((revisionId: string) => {
     setProject((p) => selectRevision(p, revisionId));
@@ -534,36 +591,31 @@ export default function Home() {
           <Image
             src="/logo-removebg.png"
             alt="cgen"
-            width={40}
-            height={40}
+            width={48}
+            height={48}
             className="brand-logo"
             priority
           />
         </button>
-        <div className="topbar-actions">
-          <span className="topbar-meta" aria-hidden="true">
-            {busy ? "Working…" : SCHEMA_VERSION}
-          </span>
-        </div>
-      </header>
 
-      <div className="session-bar" role="toolbar" aria-label="Workspaces">
-        <div className="session-tabs" role="tablist" aria-label="Workspaces">
-          {project.workspaces.map((w) => (
-            <button
-              key={w.id}
-              role="tab"
-              aria-selected={w.id === activeWorkspace.id}
-              className={`session-tab${w.id === activeWorkspace.id ? " active" : ""}`}
-              onClick={() => handleSelectWorkspace(w.id)}
-              disabled={busy}
-              title={`${w.name} · ${w.revisions.length} revision${w.revisions.length === 1 ? "" : "s"}`}
-            >
-              {w.name} ({w.revisions.length})
-            </button>
-          ))}
+        <div className="topbar-library">
+          <ComponentBrowser
+            catalog={catalog}
+            busy={busy}
+            onAdd={handleAddComponent}
+          />
         </div>
-        <span className="session-spacer" />
+
+        <span className="topbar-spacer" />
+
+        <button
+          className="session-action"
+          onClick={handleGoHome}
+          disabled={busy}
+          title="Back to the workspace shelf"
+        >
+          Workspace
+        </button>
         <button
           className="session-action"
           onClick={handleClearViewer}
@@ -572,40 +624,49 @@ export default function Home() {
         >
           Clear viewer
         </button>
-        <button
-          className="session-action"
-          onClick={handleNewWorkspace}
-          disabled={busy}
-          title="Start a fresh empty workspace without affecting existing ones"
-        >
-          + New workspace
-        </button>
-      </div>
-
-      <div className="component-palette">
-        <ComponentBrowser
-          catalog={catalog}
-          busy={busy}
-          onAdd={handleAddComponent}
-        />
-      </div>
+      </header>
 
       <main className="layout">
         <div className="workspace-main">
           <CadViewport
             objects={objects.map((object) => {
               const isSel = object.id === activeSelectedId;
-              const transform = isSel
-                ? { position: draftPosition, rotation: draftRotation }
-                : object.transform;
+              if (!isSel) {
+                return {
+                  id: object.id,
+                  url: object.stlUrl ?? "",
+                  position: object.transform.position,
+                  rotation: object.transform.rotation,
+                  visible: object.visible && Boolean(object.stlUrl),
+                  selected: false,
+                  instances: object.instances,
+                  recenter:
+                    displayResult !== null &&
+                    isPartSpec(displayResult.specification),
+                };
+              }
+              if (moving && moveOrigin !== null) {
+                  return {
+                    id: object.id,
+                    url: object.stlUrl ?? "",
+                    position: moveOrigin.position,
+                    rotation: draftRotation,
+                    visible: object.visible && Boolean(object.stlUrl),
+                    selected: true,
+                    instances: moveOrigin.instances,
+                    recenter:
+                      displayResult !== null &&
+                      isPartSpec(displayResult.specification),
+                  };
+                }
               return {
                 id: object.id,
                 url: object.stlUrl ?? "",
-                position: transform.position,
-                rotation: transform.rotation,
+                position: draftPosition,
+                rotation: draftRotation,
                 visible: object.visible && Boolean(object.stlUrl),
-                selected: isSel,
-                instances: object.instances,
+                selected: true,
+                instances: draftInstances,
                 recenter:
                   displayResult !== null &&
                   isPartSpec(displayResult.specification),
@@ -616,8 +677,11 @@ export default function Home() {
             onPreviewStatus={handlePreviewStatus}
             onSelectExample={setPrompt}
             onSelectObject={handleSelectObject}
-            schemaVersion={SCHEMA_VERSION}
             liveScale={liveScale}
+            canDrag={!busy && activeSelectedId !== null}
+            onMoveStart={handleMoveStart}
+            onMoveDelta={handleMoveDelta}
+            onMoveEnd={handleMoveEnd}
           />
 
           <div className="prompt-bar">
