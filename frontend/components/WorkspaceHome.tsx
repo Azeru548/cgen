@@ -12,7 +12,6 @@ import type { Project, Workspace } from "@/types/revisions";
 interface WorkspaceHomeProps {
   project: Project;
   busy: boolean;
-  engineReady: boolean;
   onOpen: (workspaceId: string) => void;
   onCreate: () => void;
 }
@@ -37,7 +36,6 @@ function coverStyle(ws: Workspace): React.CSSProperties {
 export function WorkspaceHome({
   project,
   busy,
-  engineReady,
   onOpen,
   onCreate,
 }: WorkspaceHomeProps) {
@@ -59,13 +57,6 @@ export function WorkspaceHome({
             <strong>cgen</strong>
             <small>AI CAD generator</small>
           </span>
-        </div>
-        <div
-          className={`engine-pill ${engineReady ? "ready" : "unknown"}`}
-          role="status"
-        >
-          <span className="engine-dot" aria-hidden="true" />
-          {engineReady ? "ENGINE READY" : "ENGINE STANDBY"}
         </div>
       </header>
 

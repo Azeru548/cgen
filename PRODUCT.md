@@ -24,7 +24,7 @@ Language-to-solid generation with a deterministic CadQuery engine, a versioned c
 
 ## Operating Context
 
-Single-page web workstation: prompt bar, multi-object WebGL scene, inspector (assembly tree, component browser, spec, revisions, downloads), boot/engine status. Work happens in Project → Workspace → Revision sessions. Backend download tokens are short-lived; specs remain authoritative.
+Single-page web workstation: prompt bar, multi-object WebGL scene, component library palette, inspector (assembly tree, spec, revisions, downloads), boot checks. Work happens in Project → Workspace → Revision sessions. Backend download tokens are short-lived; specs remain authoritative.
 
 ## Capabilities and Constraints
 
@@ -42,7 +42,7 @@ Single-page web workstation: prompt bar, multi-object WebGL scene, inspector (as
 
 - Name: cgen — AI CAD generator
 - Logo asset: `frontend/public/logo-removebg.png`
-- Voice: plain, technical-but-approachable, honest about readiness (engine pill, boot checks)
+- Voice: plain, technical-but-approachable, honest about readiness (boot checks)
 - Signature loader: walking-machine SVG (keep as personality unless redesign replaces it deliberately)
 
 ## Evidence on Hand

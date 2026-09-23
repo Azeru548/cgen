@@ -32,7 +32,7 @@ export function Inspector({
   return (
     <>
       <div className="inspector-header">Inspector</div>
-      <div className="inspector-body">
+      <div className="inspector-body" tabIndex={-1}>
         <RevisionHistory workspace={workspace} onSelect={onSelectRevision} />
         {assembly}
         {parametric}

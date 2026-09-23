@@ -41,7 +41,6 @@ import {
 } from "@/lib/revisions";
 import { computeLiveScale } from "@/lib/parameters";
 import type {
-  BackendHealth,
   CatalogComponent,
   GenerateResponse,
   ParamValue,
@@ -49,7 +48,6 @@ import type {
 import type { Project } from "@/types/revisions";
 
 type PageStatus = "idle" | "generating" | "ready" | "error";
-type EngineState = "ready" | "processing" | "error" | "unknown";
 type AppView = "home" | "workspace";
 
 const SCHEMA_VERSION = "SCHEMA 4.0";
@@ -80,7 +78,6 @@ export default function Home() {
   );
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [health, setHealth] = useState<BackendHealth | null>(null);
   const [booting, setBooting] = useState(true);
   const [bootChecks, setBootChecks] = useState<BootChecks>({
     schema: false,
@@ -121,7 +118,6 @@ export default function Home() {
     let cancelled = false;
     checkBackendHealth().then((info) => {
       if (cancelled) return;
-      setHealth(info);
       setBootChecks({
         schema: true,
         renderer: detectWebgl(),
@@ -505,35 +501,6 @@ export default function Home() {
 
   const busy = status === "generating";
 
-  const engineState: EngineState = busy
-    ? "processing"
-    : status === "error"
-      ? "error"
-      : health === null
-        ? "unknown"
-        : health.cadquery_available
-          ? "ready"
-          : "error";
-
-  const engineLabel = useMemo(() => {
-    switch (engineState) {
-      case "ready":
-        return "ENGINE READY";
-      case "processing":
-        return "ENGINE PROCESSING";
-      case "error":
-        return "ENGINE ERROR";
-      default:
-        return "ENGINE STANDBY";
-    }
-  }, [engineState]);
-
-  const engineTitle = health
-    ? `Backend ${health.status} \u00b7 CadQuery ${health.cadquery_version ?? "unknown"}`
-    : "Backend status unknown";
-
-  const engineReady = health !== null && health.cadquery_available;
-
   if (view === "home") {
     return (
       <>
@@ -543,7 +510,6 @@ export default function Home() {
         <WorkspaceHome
           project={project}
           busy={busy}
-          engineReady={engineReady}
           onOpen={handleOpenWorkspace}
           onCreate={handleNewWorkspace}
         />
@@ -562,46 +528,26 @@ export default function Home() {
           type="button"
           className="brand"
           onClick={handleGoHome}
-          title="Back to workspaces"
+          title="Back to workspace shelf"
           aria-label="Back to workspace shelf"
         >
           <Image
             src="/logo-removebg.png"
-            alt=""
-            width={32}
-            height={32}
+            alt="cgen"
+            width={40}
+            height={40}
             className="brand-logo"
             priority
           />
-          <span className="brand-text">
-            <strong>cgen</strong>
-            <small>← Workspaces</small>
-          </span>
         </button>
         <div className="topbar-actions">
-          <button
-            type="button"
-            className="session-action"
-            onClick={handleGoHome}
-            disabled={busy}
-          >
-            All workspaces
-          </button>
-          <div
-            className={`engine-pill ${engineState}`}
-            title={engineTitle}
-            role="status"
-          >
-            <span className="engine-dot" aria-hidden="true" />
-            {engineLabel}
-          </div>
+          <span className="topbar-meta" aria-hidden="true">
+            {busy ? "Working…" : SCHEMA_VERSION}
+          </span>
         </div>
       </header>
 
-      <div className="session-bar" role="toolbar" aria-label="Project workspaces">
-        <span className="session-project" title="Active project">
-          {project.name}
-        </span>
+      <div className="session-bar" role="toolbar" aria-label="Workspaces">
         <div className="session-tabs" role="tablist" aria-label="Workspaces">
           {project.workspaces.map((w) => (
             <button
@@ -634,14 +580,14 @@ export default function Home() {
         >
           + New workspace
         </button>
-        <button
-          className="session-action"
-          onClick={handleGoHome}
-          disabled={busy}
-          title="Return to the workspace shelf"
-        >
-          ← Shelf
-        </button>
+      </div>
+
+      <div className="component-palette">
+        <ComponentBrowser
+          catalog={catalog}
+          busy={busy}
+          onAdd={handleAddComponent}
+        />
       </div>
 
       <main className="layout">
@@ -714,7 +660,11 @@ export default function Home() {
                 {prompt.length} / {MAX_PROMPT_LENGTH}
               </span>
               <span className="char-count">
-                Ctrl+Enter to {visible !== null ? "modify" : "generate"}
+                {busy
+                  ? visible !== null
+                    ? "Modifying…"
+                    : "Generating…"
+                  : `Ctrl+Enter to ${visible !== null ? "modify" : "generate"}`}
               </span>
             </div>
           </div>
@@ -740,11 +690,6 @@ export default function Home() {
                   onToggleVisible={handleToggleVisible}
                   onRemove={handleRemoveComponent}
                   busy={busy}
-                />
-                <ComponentBrowser
-                  catalog={catalog}
-                  busy={busy}
-                  onAdd={handleAddComponent}
                 />
                 <ObjectInspector
                   object={selectedObject}
