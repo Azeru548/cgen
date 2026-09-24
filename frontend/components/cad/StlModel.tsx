@@ -108,11 +108,11 @@ export function StlModel({
       }}
     >
       <meshStandardMaterial
-        color={selected ? "#5c7ae8" : "#8a8d85"}
-        metalness={0.3}
-        roughness={0.5}
-        emissive={selected ? "#1c3fa8" : "#000000"}
-        emissiveIntensity={selected ? 0.35 : 0}
+        color={selected ? "#e04a55" : "#9aa1ab"}
+        metalness={0.35}
+        roughness={0.45}
+        emissive={selected ? "#8a1520" : "#000000"}
+        emissiveIntensity={selected ? 0.4 : 0}
       />
     </mesh>
   );

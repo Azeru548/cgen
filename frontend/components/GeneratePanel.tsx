@@ -21,10 +21,8 @@ export function GeneratePanel({
 
   return (
     <section className="panel" aria-labelledby="generate-heading">
-      <h2 id="generate-heading" className="kicker">
-        <span className="kicker-index">01</span>
-        <span className="kicker-label">Input</span>
-        <span className="kicker-rule" aria-hidden="true" />
+      <h2 id="generate-heading" className="panel-title">
+        Input
       </h2>
       <label htmlFor="prompt-input" className="field-label">
         Describe your part

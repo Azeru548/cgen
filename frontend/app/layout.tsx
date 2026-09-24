@@ -18,21 +18,11 @@ export default function RootLayout({
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
           rel="stylesheet"
         />
       </head>
-      <body>
-        {/*
-THESIS: cgen is an open making-kit — color-coded compartments and a landing shelf of project trays; refuses monochrome brutalist CAD chrome.
-OWN-WORLD: warm ivory canvas, white surfaces, coral/cobalt/mint/amber roles, 12–20px radii, Bricolage Grotesque + Plex Mono for measurements only.
-STORY: creator lands on the tray shelf, opens a workspace, describes a part, previews it, inspects and downloads — color marks the compartment.
-FIRST VIEWPORT: tray cards + create action; workspace view: one top bar (logo, model library, Workspace, Clear viewer), rounded viewport + inspector, fixed prompt composer.
-FORM: assigned direction "Open Kit", seed b5593edb.
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md.
-*/}
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * WorkspaceHome — landing shelf of project trays (Open Kit direction).
- * Each workspace is a rounded tray card with a soft blurred color field
- * and title; selecting one enters the editor. Create starts a new tray.
+ * WorkspaceHome — calibration bench of engraved workspace nameplates
+ * (Precision Bench direction). Each workspace is a metal nameplate with a
+ * permanent serial and revision stamp; selecting one enters the editor.
  */
 import Image from "next/image";
 import { useMemo } from "react";
@@ -16,22 +16,15 @@ interface WorkspaceHomeProps {
   onCreate: () => void;
 }
 
-function hueFrom(id: string, name: string): number {
-  const s = `${id}:${name}`;
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return h % 360;
+function serialFor(ws: Workspace, index: number): string {
+  const n = (Math.abs(hash(ws.id)) % 900) + 100 + index;
+  return `WS-${String(n).padStart(3, "0")}`;
 }
 
-function coverStyle(ws: Workspace): React.CSSProperties {
-  const h = hueFrom(ws.id, ws.name);
-  const hue = 214 + (h % 36);
-  const h2 = (hue - 14 + 360) % 360;
-  const h3 = (hue + 22) % 360;
-  return {
-    ["--tray-h" as string]: String(hue),
-    background: `linear-gradient(145deg, hsl(${hue} 82% 54%), hsl(${h2} 88% 42%) 55%, hsl(${h3} 75% 30%))`,
-  };
+function hash(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return h;
 }
 
 export function WorkspaceHome({
@@ -61,7 +54,7 @@ export function WorkspaceHome({
         <div className="home-intro">
           <h1 className="home-title">Open a workspace</h1>
           <p className="home-sub">
-            Pick a tray to continue a model, or start a fresh workspace for a new part.
+            Pick a nameplate to continue a model, or stamp a fresh workspace for a new part.
           </p>
         </div>
 
@@ -74,24 +67,22 @@ export function WorkspaceHome({
                 <button
                   type="button"
                   className={`tray-card${active ? " is-active" : ""}`}
-                  style={{
-                    ...coverStyle(ws),
-                    animationDelay: `${Math.min(index * 70, 420)}ms`,
-                  }}
+                  style={{ animationDelay: `${Math.min(index * 70, 420)}ms` }}
                   onClick={() => onOpen(ws.id)}
                   disabled={busy}
                   data-testid={`tray-${ws.id}`}
                 >
-                  <span className="tray-blur" aria-hidden="true" />
-                  <span className="tray-scrim" aria-hidden="true" />
                   <span className="tray-body">
                     <span className="tray-meta">
-                      {count === 0
-                        ? "Empty tray"
-                        : `${count} revision${count === 1 ? "" : "s"}`}
+                      <span className="tray-serial">{serialFor(ws, index)}</span>
                       {active ? " · last open" : ""}
                     </span>
                     <span className="tray-title">{ws.name}</span>
+                    <span className="tray-rev">
+                      {count === 0
+                        ? "No revisions"
+                        : `Rev ${String(count).padStart(2, "0")}`}
+                    </span>
                     <span className="tray-cta">Open workspace →</span>
                   </span>
                 </button>
@@ -110,7 +101,7 @@ export function WorkspaceHome({
                 +
               </span>
               <span className="tray-body">
-                <span className="tray-meta">New</span>
+                <span className="tray-meta">New plate</span>
                 <span className="tray-title">Create workspace</span>
                 <span className="tray-cta">Start blank →</span>
               </span>

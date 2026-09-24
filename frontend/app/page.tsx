@@ -33,7 +33,6 @@ import {
   addWorkspace,
   appendRevision,
   clearViewer,
-  createProject,
   getActiveWorkspace,
   selectRevision,
   switchWorkspace,
@@ -72,9 +71,20 @@ export default function Home() {
   // Project → Workspace → Revision model: revisions are append-only, so a
   // generate/modify never destroys previous specs. The viewer shows the
   // visible (active, non-cleared) revision of the active workspace.
-  const [project, setProject] = useState<Project>(() =>
-    createProject("Mechanical Bracket"),
-  );
+  const [project, setProject] = useState<Project>(() => ({
+    id: "project-initial",
+    name: "Mechanical Bracket",
+    workspaces: [
+      {
+        id: "workspace-initial",
+        name: "Workspace 1",
+        revisions: [],
+        activeRevisionId: null,
+        viewerCleared: false,
+      },
+    ],
+    activeWorkspaceId: "workspace-initial",
+  }));
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
@@ -575,7 +585,7 @@ export default function Home() {
   }
 
   return (
-    <div className="workspace">
+    <div className="workspace" data-moving={moving ? "" : undefined}>
       {booting ? (
         <BootScreen checks={bootChecks} onDone={handleBootDone} />
       ) : null}
@@ -598,14 +608,6 @@ export default function Home() {
           />
         </button>
 
-        <div className="topbar-library">
-          <ComponentBrowser
-            catalog={catalog}
-            busy={busy}
-            onAdd={handleAddComponent}
-          />
-        </div>
-
         <span className="topbar-spacer" />
 
         <button
@@ -627,6 +629,13 @@ export default function Home() {
       </header>
 
       <main className="layout">
+        <aside className="library-rail" aria-label="Model library">
+          <ComponentBrowser
+            catalog={catalog}
+            busy={busy}
+            onAdd={handleAddComponent}
+          />
+        </aside>
         <div className="workspace-main">
           <CadViewport
             objects={objects.map((object) => {

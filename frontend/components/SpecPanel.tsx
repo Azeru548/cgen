@@ -26,10 +26,8 @@ export function SpecPanel({ result }: SpecPanelProps) {
         aria-labelledby="spec-heading"
         data-testid="spec-panel"
       >
-        <h2 id="spec-heading" className="kicker">
-          <span className="kicker-index">02</span>
-          <span className="kicker-label">Specification</span>
-          <span className="kicker-rule" aria-hidden="true" />
+        <h2 id="spec-heading" className="panel-title">
+          Specification
         </h2>
         <p className="spec-name">{humanizeName(spec.name)}</p>
         <dl className="spec-grid">
@@ -83,10 +81,8 @@ export function SpecPanel({ result }: SpecPanelProps) {
       aria-labelledby="spec-heading"
       data-testid="spec-panel"
     >
-      <h2 id="spec-heading" className="kicker">
-        <span className="kicker-index">02</span>
-        <span className="kicker-label">Specification</span>
-        <span className="kicker-rule" aria-hidden="true" />
+      <h2 id="spec-heading" className="panel-title">
+        Specification
       </h2>
 
       <p className="spec-name">{humanizeName(spec.name)}</p>

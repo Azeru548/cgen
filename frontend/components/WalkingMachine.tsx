@@ -105,7 +105,7 @@ export function WalkingMachine({ scale = 1 }: { scale?: number }) {
                {/* Orange sensor eye — the restrained accent. */}
               <path
                 d="M242.49281,125.6424c0,-4.69442 3.80558,-8.5 8.5,-8.5c4.69442,0 8.5,3.80558 8.5,8.5c0,4.69442 -3.80558,8.5 -8.5,8.5c-4.69442,0 -8.5,-3.80558 -8.5,-8.5z"
-                fill="#e85d2a"
+                 fill="#cc2936"
                 stroke="none"
                 strokeWidth="0.5"
                 strokeLinecap="butt"

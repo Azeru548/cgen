@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { Canvas } from "@react-three/fiber";
 import {
@@ -55,6 +55,99 @@ interface CadViewportProps {
   canDrag?: boolean;
 }
 
+/** One object = one stable group. Selection never remounts StlModel
+ *  (remount disposed geometry and blanked the well). TransformControls
+ *  attaches to this group only while the object is selected. */
+function SelectableObject({
+  object,
+  canDrag,
+  onMoveDelta,
+  onMoveStart,
+  onMoveEnd,
+  onGeometry,
+  onPreviewStatus,
+  onSelectObject,
+  liveScale,
+  onOrbitEnabledChange,
+}: {
+  object: SceneViewObject;
+  canDrag: boolean;
+  onMoveDelta?: (delta: [number, number, number]) => void;
+  onMoveStart?: () => void;
+  onMoveEnd?: () => void;
+  onGeometry: () => void;
+  onPreviewStatus: (state: PreviewState, message?: string) => void;
+  onSelectObject?: (id: string | null) => void;
+  liveScale?: [number, number, number] | null;
+  onOrbitEnabledChange?: (enabled: boolean) => void;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const dragRef = useRef(false);
+  const [groupNode, setGroupNode] = useState<THREE.Group | null>(null);
+  const showGizmo = canDrag && object.selected && object.url.length > 0;
+
+  const setGroup = useCallback((node: THREE.Group | null) => {
+    groupRef.current = node;
+    setGroupNode(node);
+  }, []);
+
+  useEffect(() => {
+    if (!showGizmo) {
+      groupRef.current?.position.set(0, 0, 0);
+    }
+  }, [showGizmo]);
+
+  const poses =
+    object.instances.length > 0
+      ? object.instances
+      : [{ position: object.position, rotation: object.rotation }];
+
+  return (
+    <group ref={setGroup}>
+      {poses.map((pose, index) => (
+        <StlModel
+          key={`${object.id}:${index}`}
+          url={object.url}
+          onStatus={onPreviewStatus}
+          onGeometry={onGeometry}
+          scale={liveScale}
+          position={pose.position}
+          rotationDeg={pose.rotation}
+          recenter={object.recenter}
+          selected={object.selected}
+          objectId={object.id}
+          onSelect={onSelectObject}
+        />
+      ))}
+
+      {showGizmo && groupNode ? (
+        <TransformControls
+          object={groupNode}
+          mode="translate"
+          size={0.85}
+          onMouseDown={() => {
+            dragRef.current = true;
+            onOrbitEnabledChange?.(false);
+            onMoveStart?.();
+          }}
+          onMouseUp={() => {
+            dragRef.current = false;
+            onOrbitEnabledChange?.(true);
+            groupNode.position.set(0, 0, 0);
+            onMoveEnd?.();
+          }}
+          onObjectChange={() => {
+            if (!dragRef.current || !onMoveDelta) return;
+            const g = groupRef.current;
+            if (!g) return;
+            onMoveDelta([g.position.x, g.position.y, g.position.z]);
+          }}
+        />
+      ) : null}
+    </group>
+  );
+}
+
 function DragGroup({
   objects,
   canDrag,
@@ -69,6 +162,7 @@ function DragGroup({
   resetSignal,
   floorY,
   hasContent,
+  onOrbitEnabledChange,
 }: {
   objects: SceneViewObject[];
   canDrag: boolean;
@@ -83,79 +177,27 @@ function DragGroup({
   resetSignal: number;
   floorY: (y: number) => void;
   hasContent: boolean;
+  onOrbitEnabledChange?: (enabled: boolean) => void;
 }) {
   const [outerNode, setOuterNode] = useState<THREE.Group | null>(null);
-  const dragRef = useRef<THREE.Group>(null);
-  const [dragNode, setDragNode] = useState<THREE.Group | null>(null);
-  const draggingRef = useRef(false);
-
-  const selectedList = objects.filter((o) => o.selected && o.url.length > 0);
-  const rest = objects.filter((o) => !(o.selected && o.url.length > 0));
-
-  const handleDragEnd = useCallback(() => {
-    draggingRef.current = false;
-    dragRef.current?.position.set(0, 0, 0);
-    onMoveEnd?.();
-  }, [onMoveEnd]);
-
-  const handleObjectChange = useCallback(() => {
-    if (!draggingRef.current) return;
-    const group = dragRef.current;
-    if (!group || !onMoveDelta) return;
-    onMoveDelta([group.position.x, group.position.y, group.position.z]);
-  }, [onMoveDelta]);
-
-  const showGizmo = canDrag && selectedList.length > 0;
-
-  const renderPoses = (object: SceneViewObject) => {
-    const poses =
-      object.instances.length > 0
-        ? object.instances
-        : [{ position: object.position, rotation: object.rotation }];
-    return poses.map((pose, index) => (
-      <StlModel
-        key={`${object.id}:${index}`}
-        url={object.url}
-        onStatus={onPreviewStatus}
-        onGeometry={onGeometry}
-        scale={liveScale}
-        position={pose.position}
-        rotationDeg={pose.rotation}
-        recenter={object.recenter}
-        selected={object.selected}
-        objectId={object.id}
-        onSelect={onSelectObject}
-      />
-    ));
-  };
 
   return (
     <group ref={setOuterNode}>
-      {rest.map((object) => renderPoses(object))}
-
-      <group
-        ref={(node) => {
-          dragRef.current = node;
-          setDragNode(node);
-        }}
-        position={[0, 0, 0]}
-      >
-        {selectedList.map((object) => renderPoses(object))}
-      </group>
-
-      {showGizmo && dragNode ? (
-        <TransformControls
-          object={dragNode}
-          mode="translate"
-          size={0.85}
-          onMouseDown={() => {
-            draggingRef.current = true;
-            onMoveStart?.();
-          }}
-          onMouseUp={handleDragEnd}
-          onObjectChange={handleObjectChange}
+      {objects.map((object) => (
+        <SelectableObject
+          key={object.id}
+          object={object}
+          canDrag={canDrag}
+          onMoveDelta={onMoveDelta}
+          onMoveStart={onMoveStart}
+          onMoveEnd={onMoveEnd}
+          onGeometry={onGeometry}
+          onPreviewStatus={onPreviewStatus}
+          onSelectObject={onSelectObject}
+          liveScale={liveScale}
+          onOrbitEnabledChange={onOrbitEnabledChange}
         />
-      ) : null}
+      ))}
 
       <FrameCamera
         group={outerNode}
@@ -185,9 +227,13 @@ export function CadViewport({
   const [contentRev, setContentRev] = useState(0);
   const [resetSignal, setResetSignal] = useState(0);
   const [floorY, setFloorY] = useState(0);
+  const [orbitEnabled, setOrbitEnabled] = useState(true);
   const handleFloorY = useCallback((y: number) => setFloorY(y), []);
   const handleGeometry = useCallback(() => {
     setContentRev((n) => n + 1);
+  }, []);
+  const handleOrbitEnabled = useCallback((enabled: boolean) => {
+    setOrbitEnabled(enabled);
   }, []);
   const visible = objects.filter((o) => o.visible && o.url);
   const showEmpty = visible.length === 0 && !busy && !previewError;
@@ -199,7 +245,7 @@ export function CadViewport({
         dpr={[1, 2]}
         gl={{ antialias: true }}
       >
-        <color attach="background" args={["#171918"]} />
+        <color attach="background" args={["#0e1014"]} />
         <ambientLight intensity={0.85} />
         <directionalLight position={[120, 180, 90]} intensity={1.35} />
         <directionalLight position={[-100, 60, -120]} intensity={0.45} />
@@ -219,17 +265,18 @@ export function CadViewport({
               resetSignal={resetSignal}
               floorY={handleFloorY}
               hasContent={visible.length > 0}
+              onOrbitEnabledChange={handleOrbitEnabled}
             />
           </group>
           <Grid
             position={[0, floorY, 0]}
             args={[10, 10]}
             cellSize={10}
-            cellThickness={0.6}
-            cellColor="#3a3c38"
+            cellThickness={0.55}
+            cellColor="#2a2e36"
             sectionSize={50}
             sectionThickness={1}
-            sectionColor="#4a4c46"
+            sectionColor="#3a4048"
             fadeDistance={1400}
             fadeStrength={2}
             infiniteGrid
@@ -237,6 +284,7 @@ export function CadViewport({
         </Suspense>
         <OrbitControls
           makeDefault
+          enabled={orbitEnabled}
           enableDamping
           dampingFactor={0.12}
           minDistance={5}
@@ -244,8 +292,8 @@ export function CadViewport({
         />
         <GizmoHelper alignment="top-right" margin={[56, 56]}>
           <GizmoViewport
-            axisColors={["#c0392b", "#198754", "#3157ff"]}
-            labelColor="#faf9f5"
+            axisColors={["#cc2936", "#6a7280", "#d8dce2"]}
+            labelColor="#e8eaed"
           />
         </GizmoHelper>
       </Canvas>
