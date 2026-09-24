@@ -20,7 +20,9 @@ interface StlModelProps {
   recenter?: boolean;
   selected?: boolean;
   objectId?: string;
-  onSelect?: (id: string) => void;
+  /** Index within the component's instance list; -1 for single-pose parts. */
+  instanceIndex?: number;
+  onSelect?: (id: string, instanceIndex: number) => void;
 }
 
 /** Fetches an STL URL, parses it to BufferGeometry, centers it on the
@@ -39,6 +41,7 @@ export function StlModel({
   recenter = true,
   selected = false,
   objectId,
+  instanceIndex = -1,
   onSelect,
 }: StlModelProps) {
   const geometryRef = useRef<THREE.BufferGeometry | null>(null);
@@ -105,7 +108,7 @@ export function StlModel({
       onClick={(event) => {
         if (!objectId || !onSelect) return;
         event.stopPropagation();
-        onSelect(objectId);
+        onSelect(objectId, instanceIndex);
       }}
     >
       <meshStandardMaterial

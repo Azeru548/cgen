@@ -32,6 +32,8 @@ export interface SceneViewObject {
     rotation: [number, number, number];
   }>;
   recenter: boolean;
+  /** Selected instance of a repeated component; -1 moves the component itself. */
+  activeInstanceIndex?: number;
 }
 
 interface CadViewportProps {
@@ -40,9 +42,8 @@ interface CadViewportProps {
   previewError: string | null;
   onPreviewStatus: (state: PreviewState, message?: string) => void;
   onSelectExample: (prompt: string) => void;
-  onSelectObject?: (id: string | null) => void;
-  /** Technical chip text shown top-left (schema/engine revision). */
-  schemaVersion?: string;
+  onSelectObject?: (id: string | null, instanceIndex?: number) => void;
+  /** Technical chip text shown top-left (schema/engine revision). */  schemaVersion?: string;
   /** Immediate dial-drag scale applied to the current mesh. */
   liveScale?: [number, number, number] | null;
   /** Drag selected object → world translation delta (mm). Draft only. */
@@ -85,6 +86,10 @@ function SelectableObject({
   const dragRef = useRef(false);
   const [groupNode, setGroupNode] = useState<THREE.Group | null>(null);
   const showGizmo = canDrag && object.selected && object.url.length > 0;
+  // -1 targets the component transform (single-pose parts / whole-component
+  // move); >=0 targets one instance of a repeated component.
+  const activeIndex = object.activeInstanceIndex ?? -1;
+  const hasInstances = object.instances.length > 0;
 
   const setGroup = useCallback((node: THREE.Group | null) => {
     groupRef.current = node;
@@ -97,34 +102,64 @@ function SelectableObject({
     }
   }, [showGizmo]);
 
-  const poses =
-    object.instances.length > 0
-      ? object.instances
-      : [{ position: object.position, rotation: object.rotation }];
-
   // NOTE: TransformControls MUST stay a sibling of the group it drives.
   // drei renders its gizmo helper as a child of wherever this element
   // sits; nesting it inside the controlled group feeds the gizmo back
   // into its own transform math and locks the render loop on select.
   return (
     <>
-      <group ref={setGroup}>
-        {poses.map((pose, index) => (
+      {hasInstances ? (
+        /* Repeated component: one group per instance so a single screw can be
+         * dragged without dragging its siblings. The gizmo attaches to the
+         * active instance's group only. */
+        <>
+          {object.instances.map((pose, index) => (
+            <group
+              key={`${object.id}:${index}`}
+              ref={
+                index === activeIndex
+                  ? (node: THREE.Group | null) => {
+                      if (groupRef.current !== node) {
+                        groupRef.current = node;
+                        setGroupNode(node);
+                      }
+                    }
+                  : undefined
+              }
+            >
+              <StlModel
+                url={object.url}
+                onStatus={onPreviewStatus}
+                onGeometry={onGeometry}
+                scale={liveScale}
+                position={pose.position}
+                rotationDeg={pose.rotation}
+                recenter={object.recenter}
+                selected={object.selected && index === activeIndex}
+                objectId={object.id}
+                instanceIndex={index}
+                onSelect={onSelectObject}
+              />
+            </group>
+          ))}
+        </>
+      ) : (
+        <group ref={setGroup}>
           <StlModel
-            key={`${object.id}:${index}`}
             url={object.url}
             onStatus={onPreviewStatus}
             onGeometry={onGeometry}
             scale={liveScale}
-            position={pose.position}
-            rotationDeg={pose.rotation}
+            position={object.position}
+            rotationDeg={object.rotation}
             recenter={object.recenter}
             selected={object.selected}
             objectId={object.id}
+            instanceIndex={-1}
             onSelect={onSelectObject}
           />
-        ))}
-      </group>
+        </group>
+      )}
 
       {showGizmo && groupNode ? (
         <TransformControls

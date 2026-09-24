@@ -97,6 +97,7 @@ export default function Home() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [catalog, setCatalog] = useState<CatalogComponent[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedInstance, setSelectedInstance] = useState(-1);
   const [visibilityDraft, setVisibilityDraft] = useState<Record<string, boolean>>(
     {},
   );
@@ -126,6 +127,10 @@ export default function Home() {
   useEffect(() => {
     moveOriginRef.current = moveOrigin;
   }, [moveOrigin]);
+  const selectedInstanceRef = useRef(selectedInstance);
+  useEffect(() => {
+    selectedInstanceRef.current = selectedInstance;
+  }, [selectedInstance]);
 
   useEffect(() => {
     let cancelled = false;
@@ -268,6 +273,28 @@ export default function Home() {
     (delta: [number, number, number]) => {
       const origin = moveOriginRef.current;
       if (origin === null) return;
+      const active = selectedInstanceRef.current;
+      // A specific instance of a repeated component moves alone; otherwise the
+      // whole component (its transform plus every instance) moves as one.
+      if (active >= 0) {
+        const index = Math.min(active, origin.instances.length - 1);
+        if (index < 0) return;
+        setDraftInstances(
+          origin.instances.map((inst, i) =>
+            i === index
+              ? {
+                  position: [
+                    inst.position[0] + delta[0],
+                    inst.position[1] + delta[1],
+                    inst.position[2] + delta[2],
+                  ] as [number, number, number],
+                  rotation: inst.rotation,
+                }
+              : inst,
+          ),
+        );
+        return;
+      }
       setDraftPosition([
         origin.position[0] + delta[0],
         origin.position[1] + delta[1],
@@ -332,8 +359,9 @@ export default function Home() {
   }, []);
 
   const handleSelectObject = useCallback(
-    (id: string | null) => {
+    (id: string | null, instanceIndex = -1) => {
       setSelectedId(id);
+      setSelectedInstance(id === null ? -1 : instanceIndex);
       if (id === null) return;
       const object = objects.find((item) => item.id === id);
       if (object) hydrateDrafts(object);
@@ -459,6 +487,45 @@ export default function Home() {
       return { ...prev, [id]: !shown };
     });
   }, [objects]);
+
+  // Inspector XYZ targets the selected instance when one is active, so the
+  // fields and the gizmo always manipulate the same thing.
+  const editPosition = draftInstances[selectedInstance]?.position;
+  const shownPosition: [number, number, number] =
+    selectedInstance >= 0 && editPosition ? editPosition : draftPosition;
+
+  const handleEditPosition = useCallback(
+    (axis: 0 | 1 | 2, value: number) => {
+      const active = selectedInstanceRef.current;
+      if (active >= 0) {
+        setDraftInstances((prev) =>
+          prev.map((inst, i) =>
+            i === active
+              ? {
+                  position: [
+                    inst.position[0],
+                    inst.position[1],
+                    inst.position[2],
+                  ].map((v, ax) => (ax === axis ? value : v)) as [
+                    number,
+                    number,
+                    number,
+                  ],
+                  rotation: inst.rotation,
+                }
+              : inst,
+          ),
+        );
+        return;
+      }
+      setDraftPosition((prev) => {
+        const next: [number, number, number] = [...prev];
+        next[axis] = value;
+        return next;
+      });
+    },
+    [],
+  );
 
   const handleApplyPlacement = useCallback(() => {
     const spec = specRecord();
@@ -659,6 +726,7 @@ export default function Home() {
                   visible: object.visible && Boolean(object.stlUrl),
                   selected: false,
                   instances: object.instances,
+                  activeInstanceIndex: -1,
                   recenter:
                     displayResult !== null &&
                     isPartSpec(displayResult.specification),
@@ -673,6 +741,7 @@ export default function Home() {
                     visible: object.visible && Boolean(object.stlUrl),
                     selected: true,
                     instances: moveOrigin.instances,
+                    activeInstanceIndex: selectedInstance,
                     recenter:
                       displayResult !== null &&
                       isPartSpec(displayResult.specification),
@@ -686,6 +755,7 @@ export default function Home() {
                 visible: object.visible && Boolean(object.stlUrl),
                 selected: true,
                 instances: draftInstances,
+                activeInstanceIndex: selectedInstance,
                 recenter:
                   displayResult !== null &&
                   isPartSpec(displayResult.specification),
@@ -778,20 +848,14 @@ export default function Home() {
                   object={selectedObject}
                   catalog={catalog}
                   draftName={draftName}
-                  draftPosition={draftPosition}
+                  draftPosition={shownPosition}
                   draftRotation={draftRotation}
                   draftParams={draftParams}
                   placementDirty={placementDirty}
                   paramsDirty={paramsDirty}
                   busy={busy}
                   onName={setDraftName}
-                  onPosition={(axis, value) =>
-                    setDraftPosition((prev) => {
-                      const next: [number, number, number] = [...prev];
-                      next[axis] = value;
-                      return next;
-                    })
-                  }
+                  onPosition={handleEditPosition}
                   onRotation={(axis, value) =>
                     setDraftRotation((prev) => {
                       const next: [number, number, number] = [...prev];
