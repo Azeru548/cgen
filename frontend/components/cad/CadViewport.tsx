@@ -137,8 +137,18 @@ function SelectableObject({
             onMoveStart?.();
           }}
           onMouseUp={() => {
+            const g = groupRef.current;
+            const delta: [number, number, number] = g
+              ? [g.position.x, g.position.y, g.position.z]
+              : [0, 0, 0];
             dragRef.current = false;
             onOrbitEnabledChange?.(true);
+            // Commit the final gizmo delta while it is still non-zero, then
+            // release the group. The parent bakes the new absolute pose into
+            // the draft, so the mesh stays where it was dropped.
+            if (delta[0] !== 0 || delta[1] !== 0 || delta[2] !== 0) {
+              onMoveDelta?.(delta);
+            }
             groupNode.position.set(0, 0, 0);
             onMoveEnd?.();
           }}

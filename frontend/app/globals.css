@@ -1,9 +1,9 @@
-﻿/* cgen — Precision Bench visual world.
-   Machinist's metrology kit: cool instrument-gray ground, chrome faces,
-   engraved ink, hairline etched rules, near-square radii.
-   One signal red (#cc2936) for primary action and live state only.
-   Dark measuring well is the sole atmosphere.
-   Type: Barlow Semi Condensed (UI) + JetBrains Mono (DRO numerals). */
+﻿/* cgen — Precision Bench visual world, night shift.
+    Machinist's metrology kit after hours: deep bench-black ground, graphite
+    chrome faces, etched light ink, hairline rules, near-square radii.
+    One signal red (#cc2936) for primary action and live state only.
+    The measuring well stays the deepest dark.
+    Type: Barlow Semi Condensed (UI) + JetBrains Mono (DRO numerals). */
 
 ::selection {
   background: var(--signal-soft);
@@ -11,24 +11,24 @@
 }
 
 :root {
-  --bg: #e8eaed;
-  --bg-deep: #dde1e6;
-  --surface: #f7f8fa;
-  --panel: #eef0f3;
-  --input: #ffffff;
-  --input-hover: #f1f3f6;
-  --surface-dark: #0e1014;
-  --surface-subtle: #e2e6eb;
-  --border: #c9ced6;
-  --border-strong: #a8b0bb;
-  --ink: #16181d;
-  --ink-secondary: #4a5058;
-  --ink-faint: #555d6b;
+  --bg: #0f1319;
+  --bg-deep: #090c11;
+  --surface: #161c25;
+  --panel: #111722;
+  --input: #1c2330;
+  --input-hover: #232c3b;
+  --surface-dark: #07090d;
+  --surface-subtle: #232c3b;
+  --border: #2b3442;
+  --border-strong: #414c5e;
+  --ink: #e8eaed;
+  --ink-secondary: #a9b2be;
+  --ink-faint: #8f99a6;
   --on-cover: #f4f5f7;
 
   --signal: #cc2936;
-  --signal-hover: #b0222e;
-  --signal-soft: #f8e4e6;
+  --signal-hover: #d8404c;
+  --signal-soft: #2b1418;
   --signal-ink: #ffffff;
 
   --coral: var(--signal);
@@ -45,8 +45,8 @@
 
   --success: var(--ink);
   --warning: var(--ink-secondary);
-  --danger: #a01820;
-  --danger-bg: #f8e4e6;
+  --danger: #e0606a;
+  --danger-bg: #2b1418;
 
   --accent: var(--signal);
   --accent-hover: var(--signal-hover);
@@ -69,9 +69,9 @@
   --space-5: 1.75rem;
   --space-6: 2.5rem;
 
-  --shadow-sm: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 1px 2px rgba(22, 24, 29, 0.06);
-  --shadow-md: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 4px 12px rgba(22, 24, 29, 0.1);
-  --shadow-lg: 0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 12px 32px rgba(22, 24, 29, 0.16);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 14px 36px rgba(0, 0, 0, 0.6);
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --inspector-width: 360px;
@@ -85,7 +85,7 @@
     var(--border-strong) 0 1px,
     transparent 1px 14px
   );
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; padding: 0; margin: 0; }
@@ -263,7 +263,7 @@ button { font: inherit; color: inherit; }
   cursor: pointer;
   text-align: left;
   color: var(--ink);
-  background: linear-gradient(180deg, #f7f8fa 0%, #e8eaed 100%);
+  background: linear-gradient(180deg, #1b222d 0%, #121722 100%);
   box-shadow: var(--shadow-sm);
   animation: plate-in 0.45s var(--ease-out) both;
   transition:
@@ -437,10 +437,10 @@ button { font: inherit; color: inherit; }
   gap: 0.85rem;
   padding: 0.4rem 1.1rem;
   min-height: 3.5rem;
-  background: linear-gradient(180deg, #fafbfc 0%, #f0f2f5 100%);
+  background: linear-gradient(180deg, #1a212c 0%, #121722 100%);
   border-bottom: 1px solid var(--border-strong);
   flex-shrink: 0;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset;
 }
 
 .topbar::after {
@@ -476,6 +476,10 @@ button { font: inherit; color: inherit; }
   border-radius: var(--radius);
   object-fit: contain;
   display: block;
+  /* Dark ink logo rides on an alloy nameplate in the dark bar. */
+  background: linear-gradient(180deg, #f2f4f6 0%, #d9dee4 100%);
+  border: 1px solid var(--border-strong);
+  padding: 0.15rem;
 }
 
 .topbar-spacer {
@@ -814,7 +818,7 @@ button { font: inherit; color: inherit; }
   text-transform: uppercase;
   padding: 0.75rem 1.5rem;
   cursor: pointer;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.25) inset;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.14) inset, 0 6px 18px rgba(204, 41, 54, 0.35);
   transition: background 0.2s ease, transform 0.15s var(--ease-out);
 }
 
@@ -1133,6 +1137,12 @@ button { font: inherit; color: inherit; }
 .wm .wm-legl { translate: 30px 155px; z-index: 3; animation: wm-lstep 1s infinite ease-in; }
 .wm .wm-ground { z-index: -1; opacity: 0.5; animation: wm-scroll 5s infinite linear; }
 
+/* Night shift: re-light the machine body for the dark bench. The red eye
+ * and headlamp stay as authored; CSS fill/stroke beat SVG attributes. */
+.wm [fill="#171816"] { fill: #c7cfd8; }
+.wm [stroke="#171816"] { stroke: #c7cfd8; }
+.wm [stroke="#3c3f39"] { stroke: #7e8894; }
+
 @keyframes wm-bob {
   0%, 5% { transform: translateY(0) rotate(3deg); }
   25% { transform: translateY(5px) rotate(0deg); }
@@ -1181,7 +1191,15 @@ button { font: inherit; color: inherit; }
 
 .boot-screen-exit { opacity: 0; pointer-events: none; }
 
-.boot-logo { width: 4.5rem; height: 4.5rem; object-fit: contain; }
+.boot-logo {
+  width: 4.5rem;
+  height: 4.5rem;
+  object-fit: contain;
+  background: linear-gradient(180deg, #f2f4f6 0%, #d9dee4 100%);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 0.3rem;
+}
 
 .boot-subtitle {
   font-family: var(--mono);
@@ -1496,7 +1514,7 @@ button { font: inherit; color: inherit; }
   transition: background 0.15s ease;
 }
 
-.param-row:hover { background: rgba(22, 24, 29, 0.035); }
+.param-row:hover { background: rgba(232, 234, 237, 0.05); }
 
 .param-head {
   display: flex;
@@ -1533,7 +1551,7 @@ button { font: inherit; color: inherit; }
 }
 
 .param-input:hover:not(:disabled) {
-  border-color: #4a5058;
+  border-color: var(--border-strong);
 }
 
 .param-input:focus {
@@ -1912,7 +1930,7 @@ button { font: inherit; color: inherit; }
 }
 
 .object-xyz .object-input:hover:not(:disabled) {
-  border-color: #4a5058;
+  border-color: var(--border-strong);
 }
 
 .object-xyz .object-input:focus {

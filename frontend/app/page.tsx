@@ -119,6 +119,13 @@ export default function Home() {
       rotation: [number, number, number];
     }>;
   } | null>(null);
+  // Gizmo callbacks fire within one animation frame, before React commits the
+  // `moveOrigin` state update. The ref is the synchronous read path so the
+  // final delta of a drag is never dropped and the object never snaps back.
+  const moveOriginRef = useRef(moveOrigin);
+  useEffect(() => {
+    moveOriginRef.current = moveOrigin;
+  }, [moveOrigin]);
 
   useEffect(() => {
     let cancelled = false;
@@ -246,26 +253,29 @@ export default function Home() {
   const handleMoveStart = useCallback(() => {
     if (selectedObject === null) return;
     setMoving(true);
-    setMoveOrigin({
+    const origin = {
       position: [...draftPosition] as [number, number, number],
       instances: draftInstances.map((inst) => ({
         position: [...inst.position] as [number, number, number],
         rotation: [...inst.rotation] as [number, number, number],
       })),
-    });
+    };
+    moveOriginRef.current = origin;
+    setMoveOrigin(origin);
   }, [selectedObject, draftPosition, draftInstances]);
 
   const handleMoveDelta = useCallback(
     (delta: [number, number, number]) => {
-      if (moveOrigin === null) return;
+      const origin = moveOriginRef.current;
+      if (origin === null) return;
       setDraftPosition([
-        moveOrigin.position[0] + delta[0],
-        moveOrigin.position[1] + delta[1],
-        moveOrigin.position[2] + delta[2],
+        origin.position[0] + delta[0],
+        origin.position[1] + delta[1],
+        origin.position[2] + delta[2],
       ]);
-      if (moveOrigin.instances.length > 0) {
+      if (origin.instances.length > 0) {
         setDraftInstances(
-          moveOrigin.instances.map((inst) => ({
+          origin.instances.map((inst) => ({
             position: [
               inst.position[0] + delta[0],
               inst.position[1] + delta[1],
@@ -276,7 +286,7 @@ export default function Home() {
         );
       }
     },
-    [moveOrigin],
+    [],
   );
 
   const handleMoveEnd = useCallback(() => {

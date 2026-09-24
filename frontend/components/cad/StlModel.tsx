@@ -97,6 +97,7 @@ export function StlModel({
   const rz = (rotationDeg?.[2] ?? 0) * DEG;
   return (
     <mesh
+      userData={{ cgenContent: true }}
       geometry={geometry}
       scale={scale ?? [1, 1, 1]}
       position={position ?? [0, 0, 0]}
@@ -148,7 +149,13 @@ export function FrameCamera({
   /* eslint-disable react-hooks/immutability -- R3F cameras/controls are mutated by design */
   const measure = useCallback((): { maxDim: number; minY: number } | null => {
     if (!group || !hasContent) return null;
-    const box = new THREE.Box3().setFromObject(group);
+    /* Measure only CAD content. TransformControls' gizmo is a sibling
+     * object in the same group and is sized to the camera distance —
+     * including it throws the camera miles away on every reframe. */
+    const box = new THREE.Box3();
+    group.traverse((node) => {
+      if (node.userData?.cgenContent === true) box.expandByObject(node);
+    });
     if (box.isEmpty()) return null;
     const size = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z, 1);
