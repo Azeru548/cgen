@@ -102,23 +102,29 @@ function SelectableObject({
       ? object.instances
       : [{ position: object.position, rotation: object.rotation }];
 
+  // NOTE: TransformControls MUST stay a sibling of the group it drives.
+  // drei renders its gizmo helper as a child of wherever this element
+  // sits; nesting it inside the controlled group feeds the gizmo back
+  // into its own transform math and locks the render loop on select.
   return (
-    <group ref={setGroup}>
-      {poses.map((pose, index) => (
-        <StlModel
-          key={`${object.id}:${index}`}
-          url={object.url}
-          onStatus={onPreviewStatus}
-          onGeometry={onGeometry}
-          scale={liveScale}
-          position={pose.position}
-          rotationDeg={pose.rotation}
-          recenter={object.recenter}
-          selected={object.selected}
-          objectId={object.id}
-          onSelect={onSelectObject}
-        />
-      ))}
+    <>
+      <group ref={setGroup}>
+        {poses.map((pose, index) => (
+          <StlModel
+            key={`${object.id}:${index}`}
+            url={object.url}
+            onStatus={onPreviewStatus}
+            onGeometry={onGeometry}
+            scale={liveScale}
+            position={pose.position}
+            rotationDeg={pose.rotation}
+            recenter={object.recenter}
+            selected={object.selected}
+            objectId={object.id}
+            onSelect={onSelectObject}
+          />
+        ))}
+      </group>
 
       {showGizmo && groupNode ? (
         <TransformControls
@@ -144,7 +150,7 @@ function SelectableObject({
           }}
         />
       ) : null}
-    </group>
+    </>
   );
 }
 

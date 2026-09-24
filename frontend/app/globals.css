@@ -1793,6 +1793,15 @@ button { font: inherit; color: inherit; }
   display: none;
 }
 
+/* Portaled flyout: escapes the rail's scroll clipping and paints above
+ * the WebGL canvas. Position comes from inline style (measured anchor). */
+.palette-panel-floating {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+}
+
 .palette-panel-inner {
   max-height: min(60vh, 28rem);
   overflow-y: auto;
