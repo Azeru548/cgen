@@ -23,12 +23,15 @@ import pytest
 from app.cad.schema import BoxOperation, CADSpec
 from app.services import byteship as bs
 from app.services.byteship import (
+    ArtifactNotFoundError,
     ArtifactStorageError,
     ArtifactUrls,
     ByteshipArtifactStore,
     ByteshipClient,
     LocalArtifactStore,
+    artifact_delivery_path,
     artifact_path,
+    artifact_path_from_name,
     default_artifact_store,
 )
 from app.services.file_store import FileStore
@@ -58,25 +61,43 @@ class Recorder:
         session_status: int = 201,
         bytes_status: int = 200,
         complete_status: int = 200,
+        fetch_status: int = 200,
         session_body: object | None = None,
     ) -> None:
         self.session_status = session_status
         self.bytes_status = bytes_status
         self.complete_status = complete_status
+        self.fetch_status = fetch_status
         self.session_body = session_body
         self.calls: list[httpx.Request] = []
         self.uploaded: list[bytes] = []
+        self.stored: dict[str, bytes] = {}
+        self.pending: list[str] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.calls.append(request)
         path = request.url.path
+        if request.method == "GET":
+            if "/v1/files/" in path:
+                remote = _remote_path(path)
+                if remote not in self.stored:
+                    return httpx.Response(404, json={"error": "not_found"})
+                if self.fetch_status >= 400:
+                    return httpx.Response(self.fetch_status, json={"error": "gone"})
+                return httpx.Response(200, content=self.stored[remote])
+            return httpx.Response(404)
         if path.endswith("/upload/complete"):
             return self._complete_response(path)
         if path == "/object-storage/put":
             self.uploaded.append(request.content)
+            if self.pending:
+                self.stored[self.pending.pop(0)] = request.content
             return httpx.Response(self.bytes_status)
         if self.session_status >= 400:
             return httpx.Response(self.session_status, json={"error": "nope"})
+        remote = _remote_path(path)
+        if self.session_body is None:
+            self.pending.append(remote)
         body = (
             self.session_body
             if self.session_body is not None
@@ -264,6 +285,37 @@ def test_delivery_url_returned_from_completion():
     assert url == f"{CDN}/cgen/r/p.step"
 
 
+def test_fetch_returns_stored_bytes_with_server_side_key():
+    """Read-back goes through the API; the CDN URL is never used server-side."""
+    rec = Recorder()
+    client = _client(rec)
+    payload = b"solid x\nendsolid x\n"
+    client.upload_file(path="cgen/r/p.stl", data=payload, content_type="model/stl")
+    rec.calls.clear()
+
+    fetched = client.fetch_file("cgen/r/p.stl")
+    request = rec.calls[0]
+    assert request.method == "GET"
+    assert request.url.path == "/v1/files/cgen/r/p.stl"
+    assert request.headers["authorization"] == f"Bearer {KEY}"
+    assert fetched == payload
+
+
+def test_fetch_missing_artifact_is_not_found():
+    rec = Recorder(fetch_status=404)
+    client = _client(rec)
+    with pytest.raises(ArtifactNotFoundError):
+        client.fetch_file("cgen/r/gone.stl")
+
+
+def test_fetch_storage_failure_is_controlled():
+    rec = Recorder(fetch_status=502)
+    rec.stored["cgen/r/p.stl"] = b"solid\nendsolid\n"
+    client = _client(rec)
+    with pytest.raises(ArtifactStorageError, match="unavailable"):
+        client.fetch_file("cgen/r/p.stl")
+
+
 def test_malformed_session_response_is_controlled():
     rec = Recorder(session_body={"upload": {}})
     client = _client(rec)
@@ -348,11 +400,11 @@ def test_rebuild_uploads_real_bytes_and_returns_delivery_urls():
     assert len(stl_blob) > 84  # binary STL: 80-byte header + uint32 count + data
     assert stl_blob != step_blob
 
-    # Delivery URLs replaced the local /download token URLs, and each format
-    # resolves to its own artifact path.
-    assert result.files["step"].download_url == f"{CDN}/cgen/req-real-1/part.step"
-    assert result.files["stl"].download_url == f"{CDN}/cgen/req-real-1/part.stl"
-    assert "/download/" not in result.files["step"].download_url
+    # Delivery URLs are same-origin CGEN paths, not raw CDN URLs: the viewer
+    # fetches these bytes and the Byteship CDN sends no CORS headers.
+    assert result.files["step"].download_url == "/artifacts/req-real-1/part.step"
+    assert result.files["stl"].download_url == "/artifacts/req-real-1/part.stl"
+    assert "cdn.byteship.cloud" not in result.files["step"].download_url
     assert result.files["step"].bytes > 0
     assert result.files["stl"].bytes > 0
 
@@ -375,8 +427,8 @@ def test_store_pair_uses_deterministic_paths(tmp_path):
     urls = store.store_pair(
         step_path=step, stl_path=stl, stem="part", request_id="req-9"
     )
-    assert urls.step == f"{CDN}/cgen/req-9/part.step"
-    assert urls.stl == f"{CDN}/cgen/req-9/part.stl"
+    assert urls.step == "/artifacts/req-9/part.step"
+    assert urls.stl == "/artifacts/req-9/part.stl"
     session_paths = [c.url.path for c in rec.calls[0::3]]
     assert session_paths == [
         "/v1/files/cgen/req-9/part.step",
@@ -450,4 +502,80 @@ def test_api_error_response_never_contains_key(monkeypatch):
     assert KEY not in response.text
     assert "bship_" not in response.text
     assert "Bearer" not in response.text
+
+
+# --- Delivery path safety and endpoint ------------------------------------
+
+
+def test_delivery_path_is_same_origin_and_encoded():
+    url = artifact_delivery_path(request_id="req 1", stem="my part", fmt="step")
+    assert url.startswith("/artifacts/")
+    assert " " not in url
+    assert artifact_delivery_path(request_id="r", stem="p", fmt="stl") == (
+        "/artifacts/r/p.stl"
+    )
+
+
+def test_filenames_are_sanitized_into_paths():
+    from app.services.byteship import safe_filename
+
+    assert safe_filename("../../etc/passwd", "step").endswith(".step")
+    assert "/" not in safe_filename("../../etc/passwd", "step")
+    assert safe_filename("we ird:name*", "stl") == "we_ird_name_.stl"
+
+
+def test_path_rebuild_rejects_traversal_and_bad_format():
+    good = artifact_path_from_name("req-1", "part.step")
+    assert good == "cgen/req-1/part.step"
+    # Traversal is neutralised rather than escaping the prefix.
+    rebuilt = artifact_path_from_name("req-1", "..%2F..%2Fsecrets.step")
+    assert rebuilt.startswith("cgen/req-1/")
+    assert ".." not in rebuilt
+    with pytest.raises(ArtifactNotFoundError):
+        artifact_path_from_name("req-1", "part.exe")
+
+
+def test_artifact_endpoint_serves_stored_bytes(monkeypatch):
+    """The endpoint returns the same bytes a viewer fetch would receive."""
+    from fastapi.testclient import TestClient
+
+    from app import main as main_module
+
+    rec = Recorder()
+    store = ByteshipArtifactStore(_client(rec))
+    monkeypatch.setattr(main_module, "artifact_store", store)
+    # Seed the mock store through a real upload so the path/bytes match.
+    store._client.upload_file(
+        path="cgen/req-77/part.stl",
+        data=b"solid part\nendsolid part\n",
+        content_type="model/stl",
+    )
+    client = TestClient(main_module.app)
+    response = client.get("/artifacts/req-77/part.stl")
+    assert response.status_code == 200
+    assert response.content == b"solid part\nendsolid part\n"
+    assert response.headers["content-type"].startswith("model/stl")
+    assert KEY not in response.text
+
+
+def test_artifact_endpoint_404_for_unknown_artifact(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app import main as main_module
+
+    monkeypatch.setattr(
+        main_module, "artifact_store", ByteshipArtifactStore(_client(Recorder()))
+    )
+    client = TestClient(main_module.app)
+    assert client.get("/artifacts/nope/missing.stl").status_code == 404
+
+
+def test_artifact_endpoint_404_when_local_store_configured(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app import main as main_module
+
+    monkeypatch.setattr(main_module, "artifact_store", LocalArtifactStore(FileStore()))
+    client = TestClient(main_module.app)
+    assert client.get("/artifacts/req-1/part.stl").status_code == 404
 

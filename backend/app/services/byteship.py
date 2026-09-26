@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,10 @@ import httpx
 from .file_store import FileStore
 
 logger = logging.getLogger(__name__)
+
+#: Conservative filename allowlist. Artifact names come from the AI-proposed
+#: part name, so they are sanitized before they ever reach a path.
+_FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]")
 
 BYTESHIP_API_BASE = "https://api.byteship.dev"
 BYTESHIP_KEY_ENV = "BYTESHIP_API_KEY"
@@ -65,6 +70,10 @@ class ArtifactStorageError(RuntimeError):
     The message is safe to show a user: it never contains the API key,
     authorization headers, or signed URL tokens.
     """
+
+
+class ArtifactNotFoundError(ArtifactStorageError):
+    """The requested artifact is not in the store (maps to HTTP 404)."""
 
 
 @dataclass(frozen=True)
@@ -189,6 +198,36 @@ class ByteshipClient:
         self._put_bytes(upload_url, data, upload_headers, content_type, path)
         return self._complete(endpoint=endpoint, path=path, upload_id=upload_id)
 
+    def fetch_file(self, path: str) -> bytes:
+        """Read a stored artifact's bytes through the Byteship API.
+
+        Used by the delivery endpoint so the browser gets CAD bytes from a
+        same-origin URL. The CDN delivery URL cannot be fetched directly by
+        the browser: it serves no CORS headers, so a cross-origin `fetch()`
+        for the WebGL preview is blocked. The project key never leaves the
+        server.
+        """
+        encoded = _encode_path(path)
+        endpoint = f"{self._base_url}/v1/files/{encoded}"
+        with self._session() as http:
+            try:
+                response = http.get(endpoint, headers=self._headers())
+            except httpx.HTTPError as exc:
+                logger.error("artifact_fetch_failed path=%s", path)
+                raise ArtifactStorageError(
+                    "Artifact storage is unreachable. Try again shortly."
+                ) from exc
+        if response.status_code == 404:
+            logger.warning("artifact_fetch_failed path=%s reason=not_found", path)
+            raise ArtifactNotFoundError("Artifact not found.")
+        if response.status_code >= 400:
+            logger.error(
+                "artifact_fetch_failed path=%s status=%d", path, response.status_code
+            )
+            raise _storage_error(response.status_code, "retrieve")
+        logger.info("artifact_fetch_completed path=%s bytes=%d", path, len(response.content))
+        return response.content
+
     def _create_session(
         self,
         *,
@@ -290,7 +329,15 @@ class ByteshipClient:
 
 
 class ByteshipArtifactStore:
-    """ArtifactStore backed by Byteship."""
+    """ArtifactStore backed by Byteship.
+
+    Storage lives in Byteship, but the URL handed back to the client is a
+    same-origin CGEN path (`/artifacts/...`). The viewer fetches STL bytes to
+    build the WebGL mesh, and the Byteship CDN sends no CORS headers, so a
+    direct CDN URL would fail that fetch while a plain download link still
+    worked. The backend streams the bytes from Byteship instead, so preview
+    and download behave identically.
+    """
 
     def __init__(self, client: ByteshipClient) -> None:
         self._client = client
@@ -313,17 +360,62 @@ class ByteshipArtifactStore:
     ) -> str:
         remote_path = artifact_path(request_id=request_id, stem=stem, fmt=fmt)
         data = path.read_bytes()
-        return self._client.upload_file(
+        self._client.upload_file(
             path=remote_path,
             data=data,
             content_type=CONTENT_TYPES[fmt],
             metadata={"source": "cgen", "format": fmt},
         )
+        return artifact_delivery_path(request_id=request_id, stem=stem, fmt=fmt)
+
+    def fetch(self, request_id: str, filename: str) -> bytes:
+        return self._client.fetch_file(artifact_path_from_name(request_id, filename))
 
 
 def artifact_path(*, request_id: str, stem: str, fmt: str) -> str:
     """Deterministic Byteship path: `cgen/{request_id}/{stem}.{fmt}`."""
-    return f"{PATH_PREFIX}/{request_id}/{stem}.{fmt}"
+    return f"{PATH_PREFIX}/{request_id}/{safe_filename(stem, fmt)}"
+
+
+def safe_filename(stem: str, fmt: str) -> str:
+    """Filename used in both the remote path and the public URL."""
+    return f"{_sanitize_stem(stem)}.{fmt}"
+
+
+def _sanitize_stem(stem: str) -> str:
+    """Reduce a proposed name to one safe path segment.
+
+    Dots are allowed inside a name (`v2`) but never as a leading dot or as a
+    `..` sequence, so a crafted filename can never walk out of its prefix.
+    """
+    candidate = _FILENAME_SAFE.sub("_", (stem or "").strip())
+    candidate = re.sub(r"\.{2,}", ".", candidate).strip(".")
+    return candidate[:80] or "part"
+
+
+def artifact_delivery_path(*, request_id: str, stem: str, fmt: str) -> str:
+    """Same-origin URL the browser uses for preview and download."""
+    from urllib.parse import quote
+
+    return (
+        f"/artifacts/{quote(request_id, safe='')}"
+        f"/{quote(safe_filename(stem, fmt), safe='')}"
+    )
+
+
+def artifact_path_from_name(request_id: str, filename: str) -> str:
+    """Rebuild the Byteship path from the request id and public filename.
+
+    The filename is sanitized again here, so a crafted request cannot escape
+    the `cgen/{request_id}/` prefix or reach an unsupported format.
+    """
+    from urllib.parse import unquote
+
+    name = unquote(filename)
+    stem, dot, extension = name.rpartition(".")
+    if not dot or extension not in CONTENT_TYPES:
+        raise ArtifactNotFoundError("Unknown artifact format.")
+    return f"{PATH_PREFIX}/{request_id}/{_sanitize_stem(stem)}.{extension}"
 
 
 def byteship_api_key() -> str:

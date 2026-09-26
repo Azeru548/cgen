@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import tempfile
 import uuid
 from pathlib import Path
@@ -41,11 +42,17 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from .ai import groq_client
-from .services.byteship import default_artifact_store
+from .services.byteship import (
+    CONTENT_TYPES,
+    ArtifactNotFoundError,
+    ArtifactStorageError,
+    ByteshipArtifactStore,
+    default_artifact_store,
+)
 from .services.file_store import FileStore
 from .services.generation import (
     InvalidModificationError,
@@ -626,3 +633,50 @@ def download_generated(token: str, format: str = Query("step")):
     logger.info("download_requested token=%s format=%s", token_tag, format)
     media_type = "application/step" if format == "step" else "model/stl"
     return FileResponse(str(path), media_type=media_type, filename=filename)
+
+
+@app.get(
+    "/artifacts/{request_id}/{filename}",
+    responses={
+        400: {"description": "Unsupported artifact format."},
+        404: {"description": "No such artifact in storage."},
+        502: {"description": "Artifact storage unreachable."},
+    },
+)
+def get_artifact(request_id: str, filename: str):
+    """Serve a stored STEP/STL artifact (M10.2).
+
+    `download_url` points here so the browser fetches CAD bytes same-origin.
+    The viewer needs the STL bytes to build the WebGL mesh, and the Byteship
+    CDN sends no CORS headers, so a direct CDN URL cannot be fetched by the
+    page. Byteship remains the system of record; the key never leaves here.
+    """
+    store = artifact_store
+    if not isinstance(store, ByteshipArtifactStore):
+        raise HTTPException(
+            status_code=404,
+            detail="Remote artifact storage is not configured.",
+        )
+    try:
+        data = store.fetch(request_id, filename)
+    except ArtifactNotFoundError as e:
+        logger.warning(
+            "artifact_fetch_failed request_id=%s reason=unknown_artifact", request_id
+        )
+        raise HTTPException(status_code=404, detail=str(e))
+    except ArtifactStorageError as e:
+        logger.error("artifact_fetch_failed request_id=%s", request_id)
+        raise HTTPException(status_code=502, detail=str(e))
+    extension = filename.rpartition(".")[2]
+    media_type = CONTENT_TYPES.get(extension, "application/octet-stream")
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Content-Disposition": f'inline; filename="{_public_name(filename)}"'},
+    )
+
+
+def _public_name(filename: str) -> str:
+    """Filename for the Content-Disposition header: no quotes, no slashes."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", filename)
+    return cleaned[:120] or "artifact"

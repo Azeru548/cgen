@@ -233,6 +233,15 @@ describe("resolveFileUrl", () => {
       "https://cdn.example/x.stl",
     );
   });
+
+  it("resolves artifact delivery paths against the API base", () => {
+    /* The viewer fetches these bytes to build the WebGL mesh, so they must
+     * land on the API origin. A bare Byteship CDN URL would be blocked by
+     * CORS and surface as "Preview unavailable / Failed to fetch". */
+    const resolved = resolveFileUrl("/artifacts/req123/part.stl");
+    expect(resolved).toMatch(/^https?:\/\/.+\/artifacts\/req123\/part\.stl$/);
+    expect(resolved).not.toContain("byteship");
+  });
 });
 
 describe("checkBackendHealth", () => {
