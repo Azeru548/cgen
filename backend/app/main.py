@@ -45,6 +45,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .ai import groq_client
+from .services.byteship import default_artifact_store
 from .services.file_store import FileStore
 from .services.generation import (
     InvalidModificationError,
@@ -83,10 +84,15 @@ app.add_middleware(
 # Re-exported for backwards compatibility (tests import it from here).
 from .services.generation import MAX_PROMPT_LENGTH  # noqa: E402
 
-# Token -> generated STEP/STL pairs for /generate downloads. Ephemeral and
-# single-process by design; entries expire and are count-capped (see
-# services/file_store.py). No database, no object storage in this milestone.
+# Token -> generated STEP/STL pairs for /download when no remote artifact
+# store is configured. Ephemeral and single-process by design (see
+# services/file_store.py).
 file_store = FileStore()
+
+# Artifact delivery backend (M10.2). Byteship when BYTESHIP_API_KEY is set,
+# otherwise the local FileStore above, so the app never fails to start
+# because an optional deployment dependency is absent.
+artifact_store = default_artifact_store(file_store)
 
 
 class GenerateRequest(BaseModel):
@@ -308,7 +314,7 @@ def generate(body: GenerateRequest):
     request_id = uuid.uuid4().hex
     try:
         result = run_generation(
-            body.prompt, request_id=request_id, file_store=file_store
+            body.prompt, request_id=request_id, file_store=file_store, artifacts=artifact_store
         )
     except InvalidPromptError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -350,6 +356,7 @@ def modify(body: ModifyRequest):
             body.instruction,
             request_id=request_id,
             file_store=file_store,
+            artifacts=artifact_store,
         )
     except InvalidModificationError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -406,6 +413,7 @@ def rebuild(body: RebuildRequest):
             body.specification,
             request_id=request_id,
             file_store=file_store,
+            artifacts=artifact_store,
         )
     except ModificationRejectedError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -509,6 +517,7 @@ def assembly_add(body: AssemblyAddRequest):
             name=body.name,
             request_id=request_id,
             file_store=file_store,
+            artifacts=artifact_store,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -540,6 +549,7 @@ def assembly_remove(body: AssemblyRemoveRequest):
             body.component_id,
             request_id=request_id,
             file_store=file_store,
+            artifacts=artifact_store,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -576,6 +586,7 @@ def assembly_update(body: AssemblyUpdateRequest):
             instances=_parse_instances(body.instances),
             request_id=request_id,
             file_store=file_store,
+            artifacts=artifact_store,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))

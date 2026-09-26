@@ -24,6 +24,7 @@ from ..cad.assembly import (
     validate_registry,
 )
 from ..cad.schema import CADSpec
+from .byteship import ArtifactStore, ArtifactUrls, LocalArtifactStore
 from .file_store import FileStore
 from .generation import GeneratedFile, GenerationResult, _rename_to_stem
 from .names import sanitize_name
@@ -44,26 +45,31 @@ def parse_document(payload: object) -> CADSpec | AssemblySpec:
 
 
 def _files_from_export(
-    exported: dict, stem: str, file_store: FileStore
+    exported: dict,
+    stem: str,
+    file_store: FileStore,
+    request_id: str,
+    artifacts: ArtifactStore | None = None,
 ) -> dict[str, GeneratedFile]:
     step_final = _rename_to_stem(Path(exported["step_path"]), stem, "step")
     stl_final = _rename_to_stem(Path(exported["stl_path"]), stem, "stl")
     cadquery_engine.validate_exported_files(step_final, stl_final)
-    token = file_store.put(
-        step_path=str(step_final), stl_path=str(stl_final), stem=stem
+    store: ArtifactStore = artifacts or LocalArtifactStore(file_store)
+    urls: ArtifactUrls = store.store_pair(
+        step_path=step_final, stl_path=stl_final, stem=stem, request_id=request_id
     )
     return {
         "step": GeneratedFile(
             format="step",
             filename=step_final.name,
             bytes=step_final.stat().st_size,
-            download_url=f"/download/{token}?format=step",
+            download_url=urls.step,
         ),
         "stl": GeneratedFile(
             format="stl",
             filename=stl_final.name,
             bytes=stl_final.stat().st_size,
-            download_url=f"/download/{token}?format=stl",
+            download_url=urls.stl,
         ),
     }
 
@@ -81,6 +87,7 @@ def export_assembly_document(
     *,
     request_id: str,
     file_store: FileStore,
+    artifacts: ArtifactStore | None = None,
 ) -> GenerationResult:
     """Build every component, export per-object + compound files."""
     started = time.monotonic()
@@ -103,7 +110,11 @@ def export_assembly_document(
             local, f"{stem}_{component.id}", out_dir=None
         )
         component_files[component.id] = _files_from_export(
-            local_export, f"{stem}_{component.id}", file_store
+            local_export,
+            f"{stem}_{component.id}",
+            file_store,
+            request_id,
+            artifacts,
         )
         for pose in instance_poses(component):
             if not component.visible:
@@ -120,7 +131,7 @@ def export_assembly_document(
         )
 
     combined = cadquery_engine.export_solids(world_solids, stem)
-    files = _files_from_export(combined, stem, file_store)
+    files = _files_from_export(combined, stem, file_store, request_id, artifacts)
     cad_ms = int((time.monotonic() - cad_started) * 1000)
     total_ms = int((time.monotonic() - started) * 1000)
     logger.info(
@@ -229,6 +240,7 @@ def add_component(
     name: str | None,
     request_id: str,
     file_store: FileStore,
+    artifacts: ArtifactStore | None = None,
 ) -> GenerationResult:
     definition = registry.get(component_type)
     if not definition.insertable:
@@ -266,8 +278,29 @@ def add_component(
         name=assembly_name,
         components=prior + [added],
     )
+    return _export(
+        next_spec, request_id=request_id, file_store=file_store, artifacts=artifacts
+    )
+
+
+def _export(
+    spec: AssemblySpec,
+    *,
+    request_id: str,
+    file_store: FileStore,
+    artifacts: ArtifactStore | None,
+):
+    """Call the exporter, passing `artifacts` only when one is configured.
+
+    Keeping the default call shape identical means existing callers and stubs
+    of `export_assembly_document` continue to work unchanged.
+    """
+    if artifacts is None:
+        return export_assembly_document(
+            spec, request_id=request_id, file_store=file_store
+        )
     return export_assembly_document(
-        next_spec, request_id=request_id, file_store=file_store
+        spec, request_id=request_id, file_store=file_store, artifacts=artifacts
     )
 
 
@@ -277,6 +310,7 @@ def remove_component(
     *,
     request_id: str,
     file_store: FileStore,
+    artifacts: ArtifactStore | None = None,
 ) -> GenerationResult:
     assembly = as_assembly(current)
     remaining = [c for c in assembly.components if c.id != component_id]
@@ -285,8 +319,8 @@ def remove_component(
     if not remaining:
         raise ValueError("Cannot remove the last object. Clear the viewer instead.")
     next_spec = assembly.model_copy(update={"components": remaining})
-    return export_assembly_document(
-        next_spec, request_id=request_id, file_store=file_store
+    return _export(
+        next_spec, request_id=request_id, file_store=file_store, artifacts=artifacts
     )
 
 
@@ -301,6 +335,7 @@ def update_component(
     instances: list[Transform] | None,
     request_id: str,
     file_store: FileStore,
+    artifacts: ArtifactStore | None = None,
 ) -> GenerationResult:
     assembly = as_assembly(current)
     found = False
@@ -330,8 +365,8 @@ def update_component(
     if not found:
         raise ValueError(f"No component with id '{component_id}' in this assembly.")
     next_spec = assembly.model_copy(update={"components": updated})
-    return export_assembly_document(
-        next_spec, request_id=request_id, file_store=file_store
+    return _export(
+        next_spec, request_id=request_id, file_store=file_store, artifacts=artifacts
     )
 
 
@@ -341,6 +376,7 @@ def rebuild_assembly(
     *,
     request_id: str,
     file_store: FileStore,
+    artifacts: ArtifactStore | None = None,
 ) -> GenerationResult:
     """Numeric/transform retune of an existing assembly. No add/remove/type swap."""
     old_a = as_assembly(base)
@@ -369,6 +405,6 @@ def rebuild_assembly(
             validate_rebuild(old_c.generated, new_c.generated)
     if old_a.model_dump() == new_a.model_dump():
         raise ModificationRejectedError("No changes detected in the assembly.")
-    return export_assembly_document(
-        new_a, request_id=request_id, file_store=file_store
+    return _export(
+        new_a, request_id=request_id, file_store=file_store, artifacts=artifacts
     )

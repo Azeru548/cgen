@@ -11,7 +11,7 @@ from app.main import app
 client = TestClient(app)
 
 
-def _fake_export(assembly, *, request_id, file_store):
+def _fake_export(assembly, *, request_id, file_store, artifacts=None):
     from app.cad.assembly import resolve_relationships, validate_registry
     from app.services.generation import GeneratedFile, GenerationResult
 

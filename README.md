@@ -180,7 +180,34 @@ Push to GitHub; Render rebuilds from `render.yaml` (Docker). Set `GROQ_API_KEY`
 in the Render Dashboard (service → Environment); optional `GROQ_MODEL` override
 (default `openai/gpt-oss-120b`).
 
+Optional artifact storage: set `BYTESHIP_API_KEY` (server-side only) to deliver
+generated STEP/STL files through Byteship. Without it the app falls back to the
+in-process download store and behaves exactly as before. Never expose the key
+to the browser.
+
 Costs remain $0: Render Free + Groq free tier + GitHub free.
+
+## M10.2 — Artifact storage and delivery (Byteship)
+
+Generated CAD bytes are now delivered through a small storage abstraction:
+
+```
+CAD generation → ArtifactStore → delivery URL
+```
+
+- **Byteship (production).** When `BYTESHIP_API_KEY` is set, each STEP/STL pair
+  is uploaded to Byteship and `files.*.download_url` becomes the CDN delivery
+  URL. Path-keyed upload: `PUT /v1/files/{path}` → `PUT {upload.url}` with the
+  returned headers → `POST /v1/files/{path}/upload/complete`. Paths are
+  `cgen/{request_id}/{filename}`; the user prompt is never used.
+- **Local (default, no key).** The existing in-process `FileStore`, serving
+  `/download/{token}?format=…`.
+
+The artifact bytes are never regenerated for upload — CadQuery runs once, and no
+CAD data is sent to an LLM. STEP uploads as `application/step`, STL as
+`model/stl`. A storage failure returns CGEN's normal controlled error rather
+than a success with a dead link. See `backend/app/services/byteship.py`.
+
 
 ## M7 — Modification, revisions, schema v3.2
 

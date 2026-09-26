@@ -30,6 +30,7 @@ from ..ai import groq_client
 from ..cad import cadquery_engine
 from ..cad.assembly import AssemblySpec
 from ..cad.schema import BoxOperation, CADSpec
+from .byteship import ArtifactStore, ArtifactUrls, LocalArtifactStore
 from .file_store import FileStore
 from .names import default_name_for, sanitize_name
 
@@ -61,6 +62,26 @@ class GenerationResult:
     component_files: dict[str, dict[str, GeneratedFile]] | None = None
 
 
+def _deliver(
+    artifacts: ArtifactStore | None,
+    file_store: FileStore,
+    *,
+    step_path: Path,
+    stl_path: Path,
+    stem: str,
+    request_id: str,
+) -> ArtifactUrls:
+    """Hand the exported bytes to the configured delivery backend.
+
+    `artifacts` is optional so every pre-existing caller keeps the local
+    FileStore behaviour; production passes the Byteship-backed store.
+    """
+    store: ArtifactStore = artifacts or LocalArtifactStore(file_store)
+    return store.store_pair(
+        step_path=step_path, stl_path=stl_path, stem=stem, request_id=request_id
+    )
+
+
 def _rename_to_stem(path: Path, stem: str, ext: str) -> Path:
     """Rename an exported temp file to the sanitized public filename.
 
@@ -84,6 +105,7 @@ def run_generation(
     *,
     request_id: str,
     file_store: FileStore,
+    artifacts: ArtifactStore | None = None,
 ) -> GenerationResult:
     """Execute one generation and return the frontend-friendly result.
 
@@ -166,21 +188,26 @@ def run_generation(
             ",".join(sorted(checks)),
         )
 
-        token = file_store.put(
-            step_path=str(step_final), stl_path=str(stl_final), stem=stem
+        urls = _deliver(
+            artifacts,
+            file_store,
+            step_path=step_final,
+            stl_path=stl_final,
+            stem=stem,
+            request_id=request_id,
         )
         files = {
             "step": GeneratedFile(
                 format="step",
                 filename=step_final.name,
                 bytes=step_final.stat().st_size,
-                download_url=f"/download/{token}?format=step",
+                download_url=urls.step,
             ),
             "stl": GeneratedFile(
                 format="stl",
                 filename=stl_final.name,
                 bytes=stl_final.stat().st_size,
-                download_url=f"/download/{token}?format=stl",
+                download_url=urls.stl,
             ),
         }
         total_ms = int((time.monotonic() - started) * 1000)
@@ -372,6 +399,7 @@ def run_modification(
     *,
     request_id: str,
     file_store: FileStore,
+    artifacts: ArtifactStore | None = None,
 ) -> GenerationResult:
     """Modify an existing spec, regenerate CAD, and return the result.
 
@@ -446,21 +474,26 @@ def run_modification(
             ",".join(sorted(checks)),
         )
 
-        token = file_store.put(
-            step_path=str(step_final), stl_path=str(stl_final), stem=stem
+        urls = _deliver(
+            artifacts,
+            file_store,
+            step_path=step_final,
+            stl_path=stl_final,
+            stem=stem,
+            request_id=request_id,
         )
         files = {
             "step": GeneratedFile(
                 format="step",
                 filename=step_final.name,
                 bytes=step_final.stat().st_size,
-                download_url=f"/download/{token}?format=step",
+                download_url=urls.step,
             ),
             "stl": GeneratedFile(
                 format="stl",
                 filename=stl_final.name,
                 bytes=stl_final.stat().st_size,
-                download_url=f"/download/{token}?format=stl",
+                download_url=urls.stl,
             ),
         }
         total_ms = int((time.monotonic() - started) * 1000)
@@ -664,6 +697,7 @@ def run_rebuild(
     *,
     request_id: str,
     file_store: FileStore,
+    artifacts: ArtifactStore | None = None,
 ) -> GenerationResult:
     """Rebuild CAD from an edited spec with no AI involved.
 
@@ -728,21 +762,26 @@ def run_rebuild(
             ",".join(sorted(checks)),
         )
 
-        token = file_store.put(
-            step_path=str(step_final), stl_path=str(stl_final), stem=stem
+        urls = _deliver(
+            artifacts,
+            file_store,
+            step_path=step_final,
+            stl_path=stl_final,
+            stem=stem,
+            request_id=request_id,
         )
         files = {
             "step": GeneratedFile(
                 format="step",
                 filename=step_final.name,
                 bytes=step_final.stat().st_size,
-                download_url=f"/download/{token}?format=step",
+                download_url=urls.step,
             ),
             "stl": GeneratedFile(
                 format="stl",
                 filename=stl_final.name,
                 bytes=stl_final.stat().st_size,
-                download_url=f"/download/{token}?format=stl",
+                download_url=urls.stl,
             ),
         }
         total_ms = int((time.monotonic() - started) * 1000)
