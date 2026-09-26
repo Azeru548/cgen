@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CatalogComponent, ComponentCategory } from "@/types/api";
 
@@ -9,6 +9,7 @@ const CATEGORIES: { id: ComponentCategory; label: string }[] = [
   { id: "fasteners", label: "Fasteners" },
   { id: "mechanical", label: "Mechanical" },
   { id: "electronics", label: "Electronics" },
+  { id: "robotics", label: "Robotics" },
   { id: "templates", label: "Templates" },
 ];
 
@@ -30,9 +31,12 @@ interface ComponentBrowserProps {
 export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps) {
   const [open, setOpen] = useState<ComponentCategory | null>(null);
   const [anchor, setAnchor] = useState<{ top: number; left: number } | null>(null);
+  const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const toggleRefs = useRef(new Map<ComponentCategory, HTMLButtonElement | null>());
+
+  const normalizedQuery = query.trim().toLowerCase();
 
   const openCategory = (cat: ComponentCategory) => {
     if (open === cat) {
@@ -53,12 +57,13 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
     setOpen(cat);
   };
 
+  const close = useCallback(() => {
+    setOpen(null);
+    setAnchor(null);
+  }, []);
+
   useEffect(() => {
     if (open === null) return undefined;
-    const close = () => {
-      setOpen(null);
-      setAnchor(null);
-    };
     const onPointer = (event: MouseEvent) => {
       const target = event.target as Node;
       if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) {
@@ -78,7 +83,19 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("resize", close);
     };
-  }, [open ]);
+  }, [open, close]);
+
+  const matches = useCallback(
+    (item: CatalogComponent) => {
+      if (normalizedQuery.length === 0) return true;
+      return (
+        item.display_name.toLowerCase().includes(normalizedQuery) ||
+        item.type.toLowerCase().includes(normalizedQuery) ||
+        item.description.toLowerCase().includes(normalizedQuery)
+      );
+    },
+    [normalizedQuery],
+  );
 
   const grouped = useMemo(() => {
     const map = new Map<ComponentCategory, CatalogComponent[]>();
@@ -91,6 +108,22 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
     return map;
   }, [catalog]);
 
+  /* A search with results across several categories opens a single flat
+   * results panel; with no query the rail keeps its category toggles. */
+  const searchHits = useMemo(() => {
+    if (normalizedQuery.length === 0) return [];
+    const out: CatalogComponent[] = [];
+    for (const item of catalog) {
+      if (item.insertable && matches(item)) out.push(item);
+    }
+    return out;
+  }, [catalog, normalizedQuery, matches]);
+
+  const searching = normalizedQuery.length > 0;
+  const visibleCategories = searching
+    ? CATEGORIES.filter((cat) => (grouped.get(cat.id) ?? []).length > 0)
+    : CATEGORIES;
+
   return (
     <nav
       ref={rootRef}
@@ -99,9 +132,26 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
       data-testid="component-browser"
     >
       <span className="palette-label">Model library</span>
+      <div className="palette-search">
+        <input
+          type="search"
+          className="palette-search-input mono"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search components"
+          aria-label="Search components"
+          data-testid="component-search"
+        />
+        {searching ? (
+          <span className="palette-search-count mono" aria-live="polite">
+            {searchHits.length}
+          </span>
+        ) : null}
+      </div>
       <div className="palette-cats">
-        {CATEGORIES.map((cat) => {
-          const items = grouped.get(cat.id) ?? [];
+        {(searching ? visibleCategories : CATEGORIES).map((cat) => {
+          const all = grouped.get(cat.id) ?? [];
+          const items = searching ? all.filter(matches) : all;
           if (items.length === 0) return null;
           const expanded = open === cat.id;
           return (
@@ -139,7 +189,12 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
                           {items.map((item) => (
                             <li key={item.type} className="browser-row">
                               <div>
-                                <div className="browser-name">{item.display_name}</div>
+                                <div className="browser-name">
+                                  {item.display_name}
+                                  <span className="browser-cat mono">
+                                    {item.category}
+                                  </span>
+                                </div>
                                 <div className="browser-desc">{item.description}</div>
                               </div>
                               <button
@@ -147,6 +202,7 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
                                 className="browser-add"
                                 disabled={busy}
                                 onClick={() => onAdd(item.type, 1)}
+                                aria-label={`Add ${item.display_name}`}
                               >
                                 Add
                               </button>
@@ -162,6 +218,9 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
           );
         })}
       </div>
+      {searching && searchHits.length === 0 ? (
+        <p className="palette-empty mono">No components match “{query.trim()}”.</p>
+      ) : null}
     </nav>
   );
 }

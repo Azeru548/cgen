@@ -171,6 +171,54 @@ def math_ceil_sqrt(n: int) -> int:
     return v
 
 
+def manual_placement_transform(
+    existing_components: int, component_type: str, parameters: dict[str, ParamValue]
+) -> Transform:
+    """Deterministic, non-overlapping default pose for a manual library add.
+
+    The M9 library inserted at the origin, so every manually added part landed
+    on top of the previous one. This places a new part in the first free slot
+    of a simple deterministic lattice, so repeated adds of the same type march
+    outward instead of stacking. Takes the current component count rather than
+    an AssemblySpec because an empty assembly is not a valid document.
+    """
+    slot = existing_components
+    spacing = _placement_spacing(component_type, parameters)
+    columns = 4
+    col = slot % columns
+    row = slot // columns
+    x = (col - (columns - 1) / 2) * spacing
+    y = (row - 0.5) * spacing
+    return Transform(position=(x, y, 0.0))
+
+
+def _placement_spacing(component_type: str, parameters: dict[str, ParamValue]) -> float:
+    """Slot pitch wide enough for this part's footprint, with clearance."""
+    extent = 40.0
+    try:
+        definition = registry.get(component_type)
+        params = registry.validate_parameters(component_type, parameters)
+    except ValueError:
+        return extent + 10.0
+    keys = {p.key for p in definition.parameters}
+    if {"width", "depth"} <= keys:
+        try:
+            width = registry._f(params, "width")
+            depth = registry._f(params, "depth")
+            extent = max(width, depth)
+        except ValueError:
+            extent = 40.0
+    elif {"diameter"} <= keys:
+        try:
+            extent = registry._f(params, "diameter")
+        except ValueError:
+            extent = 40.0
+    if component_type in registry.BOARDS:
+        profile = registry.BOARDS[component_type]
+        extent = max(profile.width, profile.depth)
+    return extent + 10.0
+
+
 def add_component(
     current: CADSpec | AssemblySpec | None,
     component_type: str,
@@ -201,7 +249,11 @@ def add_component(
     new_id = allocate_component_id(existing, component_type)
     display = name.strip() if isinstance(name, str) and name.strip() else definition.display_name
     instances = default_grid_instances(count) if count > 1 else []
-    pose = transform if transform is not None else Transform()
+    pose = (
+        transform
+        if transform is not None
+        else manual_placement_transform(len(prior), component_type, params)
+    )
     added = ComponentInstance(
         id=new_id,
         component_type=component_type,

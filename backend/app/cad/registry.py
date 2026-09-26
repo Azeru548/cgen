@@ -29,7 +29,9 @@ from .schema import (
 
 ParamKind = Literal["length", "count", "choice", "flag"]
 ParamValue = float | int | bool | str
-Category = Literal["geometry", "fasteners", "mechanical", "electronics", "templates"]
+Category = Literal[
+    "geometry", "fasteners", "mechanical", "electronics", "robotics", "templates"
+]
 
 
 @dataclass(frozen=True)
@@ -412,6 +414,208 @@ def build_breadboard(params: dict[str, ParamValue]):
     return _box(width, depth, height)
 
 
+# --- Hardware peripherals (M10.1) ------------------------------------------
+#
+# Envelopes follow common published sizes for the named part class. They are
+# representative mechanical envelopes for layout and clearance work, not
+# manufacturer-verified drawings.
+
+
+def build_oled_module(params: dict[str, ParamValue]):
+    """0.96\" I2C OLED: PCB envelope with the 4-pin header footprint."""
+    width = _f(params, "width")
+    depth = _f(params, "depth")
+    pcb = _box(width, depth, 1.6)
+    header = _box(21.0, 2.54, 2.54)
+    header = _translate(header, 0, depth / 2 - 1.27, 2.07)
+    return _union(pcb, header)
+
+
+def build_lcd_module(params: dict[str, ParamValue]):
+    """16x2 character LCD: board, display bezel, and 4 corner holes."""
+    width = _f(params, "width")
+    depth = _f(params, "depth")
+    body = _box(width, depth, 1.6)
+    glass = _box(width - 4.0, 14.0, 2.0)
+    glass = _translate(glass, 0, depth / 2 - 9.0, 1.8)
+    solid = _union(body, glass)
+    inset_x = width / 2 - 2.54
+    inset_y = depth / 2 - 2.54
+    for hx in (-inset_x, inset_x):
+        for hy in (-inset_y, inset_y):
+            cutter = _cyl(1.1, 6.0)
+            cutter = _translate(cutter, hx, hy, 0)
+            solid = _cut(solid, cutter)
+    return solid
+
+
+def build_push_button(params: dict[str, ParamValue]):
+    """Tactile switch: body, plunger, and 2 lead pins."""
+    body = _box(6.0, 6.0, 3.5)
+    plunger = _cyl(1.5, 2.0)
+    plunger = _translate(plunger, 0, 0, 2.75)
+    solid = _union(body, plunger)
+    for px in (-1.27, 1.27):
+        pin = _cyl(0.3, 6.0)
+        pin = _translate(pin, px, 0, -1.5)
+        solid = _union(solid, pin)
+    return solid
+
+
+def build_potentiometer(params: dict[str, ParamValue]):
+    """Trimmer potentiometer: body block, adjustment screw, 3 pins."""
+    body = _box(9.5, 4.5, 10.0)
+    screw = _cyl(1.5, 2.5)
+    screw = _translate(screw, 0, 0, 6.25)
+    solid = _union(body, screw)
+    for px in (-2.54, 0.0, 2.54):
+        pin = _cyl(0.3, 2.0)
+        pin = _translate(pin, px, 0, -5.0)
+        solid = _union(solid, pin)
+    return solid
+
+
+def build_terminal_block(params: dict[str, ParamValue]):
+    """Pitched terminal block: body plus one bore per way."""
+    ways = _i(params, "ways")
+    pitch = _f(params, "pitch")
+    height = _f(params, "height")
+    width = ways * pitch + (pitch - 3.0)
+    body = _box(width, 8.0, height)
+    for w in range(ways):
+        x = (w - (ways - 1) / 2) * pitch
+        for sy in (-2.0, 2.0):
+            bore = _cyl(0.9, height + 4)
+            bore = _translate(bore, x, sy, 0)
+            body = _cut(body, bore)
+    return body
+
+
+# --- Robotics (M10.1) ------------------------------------------------------
+
+
+def build_dc_motor(params: dict[str, ParamValue]):
+    """DC gear motor: cylindrical can, gearbox face, and output shaft."""
+    diameter = _f(params, "diameter")
+    length = _f(params, "length")
+    shaft_diameter = _f(params, "shaft_diameter")
+    shaft_length = _f(params, "shaft_length")
+    body = _cyl(diameter / 2, length)
+    gearbox = _box(12.0, 12.0, 4.0)
+    gearbox = _translate(gearbox, 0, 0, length / 2 + 2.0)
+    solid = _union(body, gearbox)
+    shaft = _cyl(shaft_diameter / 2, shaft_length)
+    shaft = _translate(shaft, 0, 0, length / 2 + 4.0 + shaft_length / 2)
+    return _union(solid, shaft)
+
+
+def build_servo_motor(params: dict[str, ParamValue]):
+    """Hobby servo: body, output boss, and two mounting ears with holes."""
+    length = _f(params, "length")
+    width = _f(params, "width")
+    height = _f(params, "height")
+    body = _box(width, length, height)
+    boss = _cyl(3.0, 3.0)
+    boss = _translate(boss, 0, 0, height / 2 + 1.5)
+    solid = _union(body, boss)
+    ear_y = length / 2 + 3.0
+    for ey in (-ear_y, ear_y):
+        ear = _box(width, 6.0, 2.0)
+        ear = _translate(ear, 0, ey, height / 2 - 1.0)
+        solid = _union(solid, ear)
+    for ey in (-ear_y, ear_y):
+        for ex in (-width / 2 + 2.0, width / 2 - 2.0):
+            cutter = _cyl(1.1, 6.0)
+            cutter = _translate(cutter, ex, ey, 0)
+            solid = _cut(solid, cutter)
+    return solid
+
+
+def build_wheel(params: dict[str, ParamValue]):
+    """Wheel: tyre, hub, and axle bore on the Z axis."""
+    diameter = _f(params, "diameter")
+    width = _f(params, "width")
+    bore = _f(params, "bore_diameter")
+    if bore >= diameter:
+        raise ValueError("wheel bore_diameter must be smaller than diameter")
+    tyre = _cyl(diameter / 2, width)
+    bore_cut = _cyl(bore / 2, width + 4)
+    return _cut(tyre, bore_cut)
+
+
+def build_caster_wheel(params: dict[str, ParamValue]):
+    """Caster: wheel plus a fork and a vertical swivel axis."""
+    diameter = _f(params, "diameter")
+    width = _f(params, "width")
+    bore = _f(params, "bore_diameter")
+    total_height = _f(params, "total_height")
+    wheel = build_wheel(
+        {
+            "diameter": diameter,
+            "width": width,
+            "bore_diameter": bore,
+        }
+    )
+    # Wheel axis along Z; drop the fork around it.
+    wheel = _rotate_y(wheel, 90.0)
+    wheel = _translate(wheel, 0, 0, wheel_radius_offset(diameter, total_height))
+    for side in (-1.0, 1.0):
+        fork = _box(1.5, width + 2.0, total_height - wheel_radius_offset(diameter, total_height) + 2.0)
+        fork = _translate(fork, side * (diameter / 2 + 0.75), 0, 0)
+        wheel = _union(wheel, fork)
+    top = _box(diameter + 6.0, width + 4.0, 2.0)
+    top = _translate(top, 0, 0, total_height / 2)
+    return _union(wheel, top)
+
+
+def wheel_radius_offset(diameter: float, total_height: float) -> float:
+    """Z centre of the caster wheel so its bottom sits on the ground plane."""
+    return diameter / 2.0 - (total_height / 2.0 - diameter / 2.0)
+
+
+def _rotate_y(solid, degrees: float):
+    cq = _require_cq()
+    return solid.rotate(cq.Vector(0, 0, 0), cq.Vector(0, 1, 0), degrees)
+
+
+def build_motor_bracket(params: dict[str, ParamValue]):
+    """Motor bracket: L plate with a shaft clearance hole and bolt slots."""
+    width = _f(params, "width")
+    depth = _f(params, "depth")
+    thickness = _f(params, "thickness")
+    shaft_diameter = _f(params, "shaft_diameter")
+    if thickness >= min(width, depth):
+        raise ValueError("motor bracket thickness must be smaller than width and depth")
+    plate = _box(width, depth, thickness)
+    hole = _cyl(shaft_diameter / 2 + 0.5, thickness + 4)
+    hole = _translate(hole, 0, depth / 2 - depth / 4, 0)
+    return _cut(plate, hole)
+
+
+def build_chassis_plate(params: dict[str, ParamValue]):
+    """Chassis plate with rounded-out corners via a bolt-hole pattern."""
+    width = _f(params, "width")
+    depth = _f(params, "depth")
+    thickness = _f(params, "thickness")
+    plate = _box(width, depth, thickness)
+    for hx, hy in _chassis_holes(width, depth):
+        cutter = _cyl(1.6, thickness + 4)
+        cutter = _translate(cutter, hx, hy, 0)
+        plate = _cut(plate, cutter)
+    return plate
+
+
+def _chassis_holes(width: float, depth: float) -> tuple[tuple[float, float], ...]:
+    inset_x = width / 2 - 6.0
+    inset_y = depth / 2 - 6.0
+    return (
+        (-inset_x, -inset_y),
+        (inset_x, -inset_y),
+        (-inset_x, inset_y),
+        (inset_x, inset_y),
+    )
+
+
 def build_usb_connector(params: dict[str, ParamValue]):
     return _box(_f(params, "length"), _f(params, "width"), _f(params, "height"))
 
@@ -691,6 +895,108 @@ def _defs() -> tuple[ComponentDef, ...]:
             builder=build_usb_connector,
         ),
         ComponentDef(
+            "oled_096", "electronics", "OLED 0.96\"",
+            "0.96\" I2C OLED module: PCB envelope with a 4-pin header footprint. "
+            "Representative envelope, not a manufacturer drawing.",
+            (
+                ParamSpec("width", "Width", "length", 27.0, 10.0, 80.0),
+                ParamSpec("depth", "Depth", "length", 27.0, 10.0, 80.0),
+            ),
+            builder=build_oled_module,
+        ),
+        ComponentDef(
+            "lcd_16x2", "electronics", "LCD 16x2",
+            "16x2 character LCD: board, display bezel, four corner mounting holes.",
+            (
+                ParamSpec("width", "Width", "length", 80.0, 30.0, 160.0),
+                ParamSpec("depth", "Depth", "length", 36.0, 15.0, 100.0),
+            ),
+            builder=build_lcd_module,
+        ),
+        ComponentDef(
+            "push_button", "electronics", "Push button",
+            "12 mm tactile switch: body, plunger, and two leads.",
+            (), parameterized=False, builder=build_push_button,
+        ),
+        ComponentDef(
+            "potentiometer", "electronics", "Potentiometer",
+            "Trimmer potentiometer: body, adjustment screw, three pins.",
+            (), parameterized=False, builder=build_potentiometer,
+        ),
+        ComponentDef(
+            "terminal_block", "electronics", "Terminal block",
+            "Pitched terminal block with one bore per way.",
+            (
+                ParamSpec("ways", "Ways", "count", 2, 1, 12, unit=None),
+                ParamSpec("pitch", "Pitch", "length", 5.0, 2.54, 20.0),
+                ParamSpec("height", "Height", "length", 10.0, 4.0, 40.0),
+            ),
+            builder=build_terminal_block,
+        ),
+        ComponentDef(
+            "dc_gear_motor", "robotics", "DC gear motor",
+            "Geared DC motor: can, gearbox face, output shaft.",
+            (
+                ParamSpec("diameter", "Body Ø", "length", 24.0, 6.0, 80.0),
+                ParamSpec("length", "Body length", "length", 30.0, 8.0, 120.0),
+                ParamSpec("shaft_diameter", "Shaft Ø", "length", 4.0, 1.0, 20.0),
+                ParamSpec("shaft_length", "Shaft length", "length", 10.0, 2.0, 40.0),
+            ),
+            builder=build_dc_motor,
+        ),
+        ComponentDef(
+            "servo_motor", "robotics", "Servo motor",
+            "Hobby servo: body, output boss, two mounting ears with holes.",
+            (
+                ParamSpec("length", "Length", "length", 40.0, 15.0, 90.0),
+                ParamSpec("width", "Width", "length", 20.0, 8.0, 50.0),
+                ParamSpec("height", "Height", "length", 40.0, 10.0, 90.0),
+            ),
+            builder=build_servo_motor,
+        ),
+        ComponentDef(
+            "robot_wheel", "robotics", "Robot wheel",
+            "Wheel with a hub and axle bore on the Z axis.",
+            (
+                ParamSpec("diameter", "Diameter", "length", 65.0, 10.0, 250.0),
+                ParamSpec("width", "Width", "length", 20.0, 3.0, 80.0),
+                ParamSpec("bore_diameter", "Bore Ø", "length", 6.0, 1.0, 40.0),
+            ),
+            builder=build_wheel,
+        ),
+        ComponentDef(
+            "caster_wheel", "robotics", "Caster wheel",
+            "Swivel caster: wheel, fork, and top plate.",
+            (
+                ParamSpec("diameter", "Diameter", "length", 24.0, 8.0, 80.0),
+                ParamSpec("width", "Width", "length", 12.0, 3.0, 40.0),
+                ParamSpec("bore_diameter", "Bore Ø", "length", 4.0, 1.0, 20.0),
+                ParamSpec("total_height", "Total height", "length", 38.0, 12.0, 120.0),
+            ),
+            builder=build_caster_wheel,
+        ),
+        ComponentDef(
+            "motor_bracket", "robotics", "Motor bracket",
+            "L-shaped motor plate with shaft clearance and bolt holes.",
+            (
+                ParamSpec("width", "Width", "length", 30.0, 5.0, 120.0),
+                ParamSpec("depth", "Depth", "length", 30.0, 5.0, 120.0),
+                ParamSpec("thickness", "Thickness", "length", 3.0, 0.5, 12.0),
+                ParamSpec("shaft_diameter", "Shaft Ø", "length", 4.0, 1.0, 20.0),
+            ),
+            builder=build_motor_bracket,
+        ),
+        ComponentDef(
+            "chassis_plate", "robotics", "Chassis plate",
+            "Flat chassis plate with four corner mounting holes.",
+            (
+                ParamSpec("width", "Width", "length", 120.0, 20.0, 500.0),
+                ParamSpec("depth", "Depth", "length", 90.0, 20.0, 500.0),
+                ParamSpec("thickness", "Thickness", "length", 3.0, 0.5, 15.0),
+            ),
+            builder=build_chassis_plate,
+        ),
+        ComponentDef(
             "enclosure", "templates", "Enclosure",
             "Open-top rectangular enclosure. Optional board mounting holes and USB cutout.",
             (
@@ -773,8 +1079,9 @@ def public_catalog() -> list[dict[str, object]]:
                 "description": definition.description,
                 "insertable": definition.insertable,
                 "parameterized": definition.parameterized,
-                "has_mounting_points": definition.type in BOARDS
-                or definition.type == "enclosure",
+                "has_mounting_points": bool(
+                    mounting_points_local(definition.type, default_parameters(definition.type))
+                ),
                 "parameters": params,
             }
         )
@@ -876,6 +1183,31 @@ def mounting_points_local(
         wall = _f(parameters, "wall_thickness")
         z = -height / 2 + wall
         return [(x, y, z) for x, y in profile.holes_xy]
+    if type_key == "lcd_16x2":
+        width = _f(parameters, "width")
+        depth = _f(parameters, "depth")
+        inset_x = width / 2 - 2.54
+        inset_y = depth / 2 - 2.54
+        return [
+            (x, y, 0.8)
+            for x in (-inset_x, inset_x)
+            for y in (-inset_y, inset_y)
+        ]
+    if type_key == "servo_motor":
+        length = _f(parameters, "length")
+        width = _f(parameters, "width")
+        height = _f(parameters, "height")
+        ear_y = length / 2 + 3.0
+        return [
+            (x, y, height / 2)
+            for y in (-ear_y, ear_y)
+            for x in (-width / 2 + 2.0, width / 2 - 2.0)
+        ]
+    if type_key == "chassis_plate":
+        width = _f(parameters, "width")
+        depth = _f(parameters, "depth")
+        thickness = _f(parameters, "thickness")
+        return [(x, y, thickness / 2) for x, y in _chassis_holes(width, depth)]
     return []
 
 

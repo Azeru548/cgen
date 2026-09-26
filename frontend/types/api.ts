@@ -224,6 +224,7 @@ export type ComponentCategory =
   | "fasteners"
   | "mechanical"
   | "electronics"
+  | "robotics"
   | "templates";
 
 export interface CatalogParam {
