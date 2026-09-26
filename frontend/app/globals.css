@@ -1865,6 +1865,7 @@ button { font: inherit; color: inherit; }
   top: 0;
   left: 0;
   z-index: 60;
+  touch-action: auto;
 }
 
 .palette-panel-inner {
@@ -1872,6 +1873,12 @@ button { font: inherit; color: inherit; }
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 0.35rem 0.75rem 0.55rem;
+}
+
+/* The panel is a scroll container; keep its scrollbar inside the panel so
+ * the wheel never chains through to the page or the canvas. */
+.palette-panel-floating .palette-panel-inner {
+  scrollbar-gutter: stable;
 }
 
 @keyframes palette-open {

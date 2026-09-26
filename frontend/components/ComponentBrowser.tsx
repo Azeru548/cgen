@@ -38,22 +38,23 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
 
   const normalizedQuery = query.trim().toLowerCase();
 
+  const anchorFor = useCallback((cat: ComponentCategory) => {
+    const rect = toggleRefs.current.get(cat)?.getBoundingClientRect();
+    if (!rect) return null;
+    const width = Math.min(320, window.innerWidth - 40);
+    return {
+      top: Math.max(8, Math.min(rect.top, window.innerHeight - 160)),
+      left: Math.max(8, Math.min(rect.right + 7, window.innerWidth - width - 8)),
+    };
+  }, []);
+
   const openCategory = (cat: ComponentCategory) => {
     if (open === cat) {
       setOpen(null);
       setAnchor(null);
       return;
     }
-    const rect = toggleRefs.current.get(cat)?.getBoundingClientRect();
-    if (rect) {
-      const width = Math.min(320, window.innerWidth - 40);
-      setAnchor({
-        top: Math.max(8, Math.min(rect.top, window.innerHeight - 160)),
-        left: Math.max(8, Math.min(rect.right + 7, window.innerWidth - width - 8)),
-      });
-    } else {
-      setAnchor(null);
-    }
+    setAnchor(anchorFor(cat));
     setOpen(cat);
   };
 
@@ -61,6 +62,22 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
     setOpen(null);
     setAnchor(null);
   }, []);
+
+  /* Scrolling must NOT dismiss the panel. The list inside the panel is its own
+   * scroll container, and a capture-phase scroll listener also sees those
+   * events — closing here made the dropdown unusable. Re-anchor to the toggle
+   * instead, so the panel stays usable and correctly placed. */
+  const reanchor = useCallback(() => {
+    if (open === null) return;
+    const next = anchorFor(open);
+    if (!next) {
+      close();
+      return;
+    }
+    setAnchor((prev) =>
+      prev && prev.top === next.top && prev.left === next.left ? prev : next,
+    );
+  }, [open, anchorFor, close]);
 
   useEffect(() => {
     if (open === null) return undefined;
@@ -75,15 +92,15 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
     };
     document.addEventListener("mousedown", onPointer);
     document.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
+    window.addEventListener("scroll", reanchor, true);
+    window.addEventListener("resize", reanchor);
     return () => {
       document.removeEventListener("mousedown", onPointer);
       document.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", reanchor, true);
+      window.removeEventListener("resize", reanchor);
     };
-  }, [open, close]);
+  }, [open, close, reanchor]);
 
   const matches = useCallback(
     (item: CatalogComponent) => {
@@ -183,6 +200,10 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
                       role="region"
                       aria-label={`${cat.label} components`}
                       style={{ top: anchor.top, left: anchor.left }}
+                      /* Keep wheel and drag inside the list: they must never
+                       * orbit or pan the WebGL canvas behind the overlay. */
+                      onWheel={(event) => event.stopPropagation()}
+                      onPointerDown={(event) => event.stopPropagation()}
                     >
                       <div className="palette-panel-inner">
                         <ul className="browser-list">
