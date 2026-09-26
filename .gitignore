@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# Local secrets. Never commit credentials (GROQ_API_KEY, BYTESHIP_API_KEY).
+.env
+.env.*
+!.env.example

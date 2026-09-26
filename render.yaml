@@ -16,3 +16,9 @@ services:
       # set the value in the Render Dashboard (service -> Environment).
       - key: GROQ_API_KEY
         sync: false
+      # M10.2: Byteship project key (bship_...). sync:false keeps the secret
+      # out of git. When set, generated STEP/STL files are delivered through
+      # Byteship; when unset the app falls back to the in-process download
+      # store. Set the value in the Render Dashboard (service -> Environment).
+      - key: BYTESHIP_API_KEY
+        sync: false
