@@ -11,6 +11,10 @@ import { Inspector } from "@/components/Inspector";
 import { ObjectInspector } from "@/components/ObjectInspector";
 import { ParametricPanel } from "@/components/ParametricPanel";
 import { WorkspaceHome } from "@/components/WorkspaceHome";
+import { AccountChip } from "@/components/AccountChip";
+import { useFirestore, useAuth } from "@/components/AuthProvider";
+import { SignInForm } from "@/components/SignInForm";
+import { useProjectSync } from "@/hooks/useProjectSync";
 import {
   addAssemblyComponent,
   checkBackendHealth,
@@ -131,6 +135,12 @@ export default function Home() {
   useEffect(() => {
     selectedInstanceRef.current = selectedInstance;
   }, [selectedInstance]);
+
+  // M11: mirror the project into Firestore for signed-in users. Guests keep
+  // the previous in-memory behaviour, so accounts never gate the CAD work.
+  const firestoreDb = useFirestore();
+  const { status: authStatus } = useAuth();
+  useProjectSync(project, setProject, firestoreDb);
 
   useEffect(() => {
     let cancelled = false;
@@ -657,6 +667,11 @@ export default function Home() {
           onOpen={handleOpenWorkspace}
           onCreate={handleNewWorkspace}
         />
+        {authStatus === "signed-out" ? (
+          <section className="account-gate" aria-label="Sign in">
+            <SignInForm />
+          </section>
+        ) : null}
       </>
     );
   }
@@ -686,6 +701,8 @@ export default function Home() {
         </button>
 
         <span className="topbar-spacer" />
+
+        <AccountChip />
 
         <button
           className="session-action"
