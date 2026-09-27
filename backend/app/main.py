@@ -46,6 +46,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from .ai import groq_client
+from .dependencies import Caller_
 from .services.byteship import (
     CONTENT_TYPES,
     ArtifactNotFoundError,
@@ -311,7 +312,7 @@ def test_cad_download(
         502: {"description": "Groq API failure (auth, model, rate limit, network)."},
     },
 )
-def generate(body: GenerateRequest):
+def generate(body: GenerateRequest, caller: Caller_):
     """Generate a 3D part from a natural-language prompt.
 
     Pipeline: prompt -> Groq structured CAD spec -> Pydantic validation ->
@@ -349,7 +350,7 @@ def generate(body: GenerateRequest):
         502: {"description": "Groq API failure (auth, model, rate limit, network)."},
     },
 )
-def modify(body: ModifyRequest):
+def modify(body: ModifyRequest, caller: Caller_):
     """Modify an existing part based on a natural-language instruction.
 
     Pipeline: spec + instruction -> Groq modification -> diff guard ->
@@ -406,7 +407,7 @@ class RebuildRequest(BaseModel):
         500: {"description": "CAD generation failure."},
     },
 )
-def rebuild(body: RebuildRequest):
+def rebuild(body: RebuildRequest, caller: Caller_):
     """Rebuild CAD from a numerically edited spec. No AI on this path.
 
     Pipeline: base + edited spec -> structural guard (numeric-only) ->
@@ -508,7 +509,7 @@ def list_components():
         500: {"description": "CAD generation failure."},
     },
 )
-def assembly_add(body: AssemblyAddRequest):
+def assembly_add(body: AssemblyAddRequest, caller: Caller_):
     """Insert a registry component without calling the LLM."""
     from .services import assembly as assembly_svc
 
@@ -542,7 +543,7 @@ def assembly_add(body: AssemblyAddRequest):
         500: {"description": "CAD generation failure."},
     },
 )
-def assembly_remove(body: AssemblyRemoveRequest):
+def assembly_remove(body: AssemblyRemoveRequest, caller: Caller_):
     """Remove one object from an assembly. No AI."""
     from .services import assembly as assembly_svc
 
@@ -574,7 +575,7 @@ def assembly_remove(body: AssemblyRemoveRequest):
         500: {"description": "CAD generation failure."},
     },
 )
-def assembly_update(body: AssemblyUpdateRequest):
+def assembly_update(body: AssemblyUpdateRequest, caller: Caller_):
     """Update one component's parameters, pose, visibility, or name. No AI."""
     from .services import assembly as assembly_svc
 

@@ -22,3 +22,11 @@ services:
       # store. Set the value in the Render Dashboard (service -> Environment).
       - key: BYTESHIP_API_KEY
         sync: false
+      # M11: Firebase. FIREBASE_PROJECT_ID is a public project identifier and
+      # is used to verify ID-token audience. REQUIRE_AUTH=true turns the auth
+      # gate on for /generate, /modify, /rebuild and /assembly/*; leave it
+      # unset to keep those routes open.
+      - key: FIREBASE_PROJECT_ID
+        value: vouch-c28ec
+      - key: REQUIRE_AUTH
+        value: "false"
