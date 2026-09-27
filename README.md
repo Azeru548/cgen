@@ -285,8 +285,18 @@ npm run dev         # local dev (uses NEXT_PUBLIC_API_BASE_URL)
 Env: `NEXT_PUBLIC_API_BASE_URL` (see `.env.example`). Unset, the client falls
 back to `http://localhost:3000` — set it explicitly to the backend origin.
 
-Deploy (Vercel): import the repo, set **Root Directory = `frontend`**, set
-`NEXT_PUBLIC_API_BASE_URL=https://cgen-poc.onrender.com`. Then add the Vercel
+**Accounts (M11) need no build-time config.** The public Firebase web config is
+committed in `frontend/lib/firebase.ts`, so any host can serve accounts without
+environment variables. `NEXT_PUBLIC_FIREBASE_*` still overrides it when set.
+Because `NEXT_PUBLIC_*` values are inlined at build time, changing them
+requires a **rebuild**, not just a restart.
+
+Deploy: the frontend is served from **pxxl.space** at `https://cgen.pxxl.click/`;
+the backend is a Docker web service on Render (`render.yaml`). Add the frontend
 origin to the backend's `CORS_ORIGINS` env var on Render (comma-separated,
 runtime setting — no rebuild needed), e.g.
-`CORS_ORIGINS=http://localhost:3000,https://cgen.vercel.app`.
+`CORS_ORIGINS=http://localhost:3000,https://cgen.pxxl.click`.
+
+Firebase Console setup that is **not** in the repo: enable the Email/Password
+sign-in provider, and add the frontend origin under Authentication → Settings →
+Authorized domains. Publish `firestore.rules` (per-user access).

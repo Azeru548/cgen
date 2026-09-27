@@ -27,12 +27,31 @@ export interface FirebaseConfig {
 }
 
 /**
- * Read the public web config, or null if incomplete.
+ * Public Firebase web config for cgen.
+ *
+ * These identifiers are not secrets — Firebase's own setup guide has you
+ * paste them into client code, and they ship to every browser. They are
+ * committed so the app works on any host (e.g. pxxl.space) without anyone
+ * having to configure build-time environment variables first.
+ *
+ * `NEXT_PUBLIC_FIREBASE_*` still takes precedence when present, so a
+ * deployment can override the project without a code change.
+ */
+const COMMITTED_FIREBASE_CONFIG: FirebaseConfig = {
+  apiKey: "AIzaSyBscSEjaKsUeFgvWI1SHbip4j53eExeRBA",
+  authDomain: "vouch-c28ec.firebaseapp.com",
+  projectId: "vouch-c28ec",
+  storageBucket: "vouch-c28ec.firebasestorage.app",
+  messagingSenderId: "306848610885",
+  appId: "1:306848610885:web:197d3a1782711ec736812c",
+};
+
+/**
+ * Read the public web config, or null if nothing is configured.
  *
  * Each variable is referenced explicitly: Next.js inlines individual
  * `process.env.NEXT_PUBLIC_*` accesses at build time, but reading the
- * `process.env` object as a whole yields nothing in the browser bundle,
- * which would silently disable accounts.
+ * `process.env` object as a whole yields nothing in the browser bundle.
  */
 export function readFirebaseConfig(
   env: Record<string, string | undefined> = {
@@ -45,7 +64,7 @@ export function readFirebaseConfig(
     NEXT_PUBLIC_FIREBASE_APP_ID: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
   },
 ): FirebaseConfig | null {
-  const config: FirebaseConfig = {
+  const fromEnv: FirebaseConfig = {
     apiKey: env.NEXT_PUBLIC_FIREBASE_API_KEY ?? "",
     authDomain: env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "",
     projectId: env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "",
@@ -53,8 +72,9 @@ export function readFirebaseConfig(
     messagingSenderId: env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? "",
     appId: env.NEXT_PUBLIC_FIREBASE_APP_ID ?? "",
   };
-  const missing = Object.values(config).some((value) => value.length === 0);
-  return missing ? null : config;
+  const complete = (config: FirebaseConfig) =>
+    Object.values(config).every((value) => value.length > 0) ? config : null;
+  return complete(fromEnv) ?? complete(COMMITTED_FIREBASE_CONFIG);
 }
 
 export const firebaseConfig: FirebaseConfig | null = readFirebaseConfig();

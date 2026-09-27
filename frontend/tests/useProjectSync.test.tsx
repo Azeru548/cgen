@@ -42,6 +42,7 @@ vi.mock("../components/AuthProvider", () => ({
 }));
 
 import { useProjectSync } from "../hooks/useProjectSync";
+import { readFirebaseConfig } from "../lib/firebase";
 
 const RESPONSE = {
   status: "completed",
@@ -78,6 +79,34 @@ beforeEach(() => {
   projectStore.createProjectRecord.mockReset().mockResolvedValue(undefined);
   projectStore.appendRevisions.mockReset().mockResolvedValue([]);
   projectStore.saveProjectShell.mockReset().mockResolvedValue(undefined);
+});
+
+describe("readFirebaseConfig", () => {
+  it("falls back to the committed public config with no env vars", () => {
+    const config = readFirebaseConfig({});
+    expect(config).not.toBeNull();
+    expect(config?.projectId).toBe("vouch-c28ec");
+    expect(config?.apiKey).toMatch(/^AIza/);
+  });
+
+  it("treats a partial env config as absent rather than half-configured", () => {
+    const config = readFirebaseConfig({
+      NEXT_PUBLIC_FIREBASE_API_KEY: "override-key",
+    });
+    expect(config?.projectId).toBe("vouch-c28ec");
+  });
+
+  it("prefers a fully specified env config", () => {
+    const config = readFirebaseConfig({
+      NEXT_PUBLIC_FIREBASE_API_KEY: "k",
+      NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: "a",
+      NEXT_PUBLIC_FIREBASE_PROJECT_ID: "p",
+      NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: "s",
+      NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "m",
+      NEXT_PUBLIC_FIREBASE_APP_ID: "a1",
+    });
+    expect(config?.projectId).toBe("p");
+  });
 });
 
 describe("useProjectSync as a guest", () => {
