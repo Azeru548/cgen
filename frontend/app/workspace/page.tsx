@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -71,7 +71,7 @@ export default function Home() {
   const [view, setView] = useState<AppView>("home");
   const [prompt, setPrompt] = useState("");
   const [status, setStatus] = useState<PageStatus>("idle");
-  // Project ? Workspace ? Revision model: revisions are append-only, so a
+  // Project → Workspace → Revision model: revisions are append-only, so a
   // generate/modify never destroys previous specs. The viewer shows the
   // visible (active, non-cleared) revision of the active workspace.
   const [project, setProject] = useState<Project>(() => ({
@@ -198,7 +198,7 @@ export default function Home() {
   } = paramSession;
 
   // Viewer: committed result by default; a current preview takes over; while
-  // stale/invalid the last good preview (or base) stays � never a jump.
+  // stale/invalid the last good preview (or base) stays — never a jump.
   const displayResult =
     !editsActive
       ? result
@@ -825,8 +825,8 @@ export default function Home() {
               <span className="char-count">
                 {busy
                   ? visible !== null
-                    ? "Modifying�"
-                    : "Generating�"
+                    ? "Modifying…"
+                    : "Generating…"
                   : `Ctrl+Enter to ${visible !== null ? "modify" : "generate"}`}
               </span>
             </div>
