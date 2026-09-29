@@ -1,10 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useAuth } from "@/components/AuthProvider";
 
-/** Signed-in identity in the top bar, or a compact sign-in affordance. */
+/** Signed-in identity in the top bar, or a sign-in affordance. */
 export function AccountChip() {
-  const { status, email, uid, signIn, signOut } = useAuth();
+  const { status, email, uid, signOut } = useAuth();
 
   if (status === "unavailable") return null;
   if (status === "loading") {
@@ -12,40 +13,11 @@ export function AccountChip() {
   }
   if (status === "signed-out" || !uid) {
     return (
-      <form
-        className="account-chip"
-        data-testid="account-signin-inline"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const data = new FormData(event.currentTarget);
-          const emailValue = String(data.get("email") ?? "");
-          const password = String(data.get("password") ?? "");
-          if (emailValue && password) void signIn(emailValue, password);
-          event.currentTarget.reset();
-        }}
-      >
-        <input
-          className="object-input mono"
-          type="email"
-          name="email"
-          placeholder="Email"
-          aria-label="Email"
-          autoComplete="email"
-          required
-        />
-        <input
-          className="object-input mono"
-          type="password"
-          name="password"
-          placeholder="Password"
-          aria-label="Password"
-          autoComplete="current-password"
-          required
-        />
-        <button type="submit" className="account-signout">
+      <div className="account-chip" data-testid="account-signin-inline">
+        <Link className="account-chip-link" href="/signin">
           Sign in
-        </button>
-      </form>
+        </Link>
+      </div>
     );
   }
   return (

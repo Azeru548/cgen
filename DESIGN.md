@@ -53,8 +53,11 @@ Scale (approx): home title `clamp(1.7rem, 3.5vw, 2.4rem)` · body `0.95–1.02re
 
 ## Surfaces
 
-1. **Home (`WorkspaceHome`)** — chrome top bar with tick rail; engraved workspace nameplates (WS-### serial, LAST OPEN, rev stamp) in a calibration-bench grid; create plate as dashed instrument key with red `+`.
-2. **Workspace (`page.tsx`)** — fixed 100dvh shell: top bar (logo → home, Workspace, Clear viewer) + tick rail; **left library rail** with graduated edge; dark measuring well + reticle; graduated inspector right; prompt thimble + signal Generate bottom.
+1. **Landing (`app/page.tsx`)** — entry door, Persuade mode. Top bar (logo → Sign in ghost, one signal CTA). Hero is left-weighted two-column: hook + one supporting sentence + single signal action + three-cell facts strip on the left; **spec readout** on the right — a real `3d_part` document rendered as an instrument card (prompt row, `document/schema/units` DRO rows, operation block, features, exports), labelled *"Example specification, not a customer file"*. Below: three equal columns (Describe / Assemble / Keep) divided by hairlines, never cards; closing CTA; mono footer. No card grid, no gradients.
+2. **Auth (`app/signin/page.tsx`)** — single centred card on the well: logo, title, one sentence, the form (no nested box), and a skip link straight to the workspace. Redirects away when already signed in. Accounts optional.
+3. **Onboarding (`app/onboarding/page.tsx`)** — two steps (01 Name it → 02 First part), step rail with signal marking the live step, name field, starter option list (selected = signal border + soft fill, no side-stripe), skip link. Creates the account's first project, then hands off to `/workspace`.
+4. **Home (`WorkspaceHome`, at `/workspace`)** — chrome top bar with tick rail; engraved workspace nameplates (WS-### serial, LAST OPEN, rev stamp) in a calibration-bench grid; create plate as dashed instrument key with red `+`.
+5. **Workspace (`app/workspace/page.tsx`)** — fixed 100dvh shell: top bar (logo → home, Workspace, Clear viewer) + tick rail; **left library rail** with graduated edge; dark measuring well + reticle; graduated inspector right; prompt thimble + signal Generate bottom. The sign-in form is **no longer** buried under the shelf — the top-bar chip links to `/signin`.
 
 ## Components
 
@@ -84,4 +87,4 @@ Nameplates, revision items (active = signal border, no side-stripe), model libra
 
 ## Verified
 
-- `tsc --noEmit` clean · vitest **61** · eslint 0 errors on changed files · workspace is a fixed app shell (no page scroll; inspector-only scroll) · `impeccable detect` clean on changed targets.
+- `tsc --noEmit` clean · vitest **85** · eslint 0 errors on changed files · workspace is a fixed app shell (no page scroll; inspector-only scroll) · `impeccable detect` clean on changed targets.
