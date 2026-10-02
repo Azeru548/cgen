@@ -2791,7 +2791,7 @@ button { font: inherit; color: inherit; }
 @media (max-width: 960px) {
   .layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) minmax(0, 42vh);
+    grid-template-rows: auto minmax(0, 1fr) minmax(0, 34vh);
   }
   .library-rail {
     border-right: none;
@@ -2826,7 +2826,7 @@ button { font: inherit; color: inherit; }
     max-height: none;
   }
   .inspector::before { display: none; }
-  .viewport { min-height: min(42vh, 360px); }
+  .viewport { min-height: 0; }
   .workspace-main { padding: var(--space-2); gap: var(--space-2); }
   .home-main { width: min(1100px, calc(100% - 1.5rem)); }
   .tray-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
