@@ -47,16 +47,19 @@ function icoFromPngs(entries) {
   }
 
   const ico = icoFromPngs(faviconEntries);
-  fs.writeFileSync(path.join(ROOT, "app", "favicon.ico"), ico);
+  fs.writeFileSync(path.join(ROOT, "public", "favicon.ico"), ico);
 
+  /* Served as a plain static file from public/: metadata *routes* under app/
+     are handled at request time by Next, which is one more moving part in
+     production. A static file has none. */
   const apple = await sharp(LOGO)
     .trim({ background: "#ffffff" })
     .resize(180, 180, { fit: "contain", background: { r: 255, g: 255, b: 255 } })
     .png()
     .toBuffer();
-  fs.writeFileSync(path.join(ROOT, "app", "apple-icon.png"), apple);
+  fs.writeFileSync(path.join(ROOT, "public", "apple-touch-icon.png"), apple);
 
-  console.log("favicon.ico", ico.length, "bytes; apple-icon.png", apple.length, "bytes");
+  console.log("favicon.ico", ico.length, "bytes; apple-touch-icon.png", apple.length, "bytes");
 })().catch((err) => {
   console.error("FAIL", err);
   process.exit(1);
