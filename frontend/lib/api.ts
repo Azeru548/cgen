@@ -361,7 +361,9 @@ export function humanizeApiError(err: unknown): string {
         ? "Check your connection and that the CAD service is running."
         : err.status === 400
           ? "Check the description and try again."
-          : err.status === 422
+          : err.status === 404
+            ? "That download link expired. Re-run Generate or Rebuild for fresh files."
+            : err.status === 422
             ? "The generated specification was invalid. Try rephrasing."
             : "The CAD service could not generate this part. Try simplifying the description.";
     return err.detail ? `${guidance} (${err.detail})` : guidance;

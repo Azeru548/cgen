@@ -271,6 +271,7 @@ describe("humanizeApiError", () => {
   it("maps statuses to guidance and surfaces safe backend detail", () => {
     expect(humanizeApiError(new ApiError("x", 400, "too long"))).toContain("too long");
     expect(humanizeApiError(new ApiError("x", 422))).toContain("rephrasing");
+    expect(humanizeApiError(new ApiError("x", 404))).toContain("expired");
     expect(humanizeApiError(new ApiError("x", null))).toContain("connection");
     expect(humanizeApiError(new Error("boom"))).toContain("try again");
   });

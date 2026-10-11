@@ -36,6 +36,8 @@ export function Downloads({ result }: DownloadsProps) {
       </ul>
       <p className="files-note">
         STEP is the authoritative CAD artifact. STL is the preview mesh.
+        Download links expire after ~1h or on server restart; the spec is
+        kept — re-run Generate/Rebuild for fresh links.
       </p>
     </section>
   );

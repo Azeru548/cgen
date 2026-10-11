@@ -23,6 +23,6 @@ npm run build   # production build
 npm run dev     # local dev server
 ```
 
-Deploy on Vercel with Root Directory `frontend` and
-`NEXT_PUBLIC_API_BASE_URL=https://cgen-poc.onrender.com`, then add the Vercel
+Deploy on pxxl.space with Root Directory `frontend` and
+`NEXT_PUBLIC_API_BASE_URL=https://cgen-poc.onrender.com`, then add the pxxl
 origin to the backend `CORS_ORIGINS` env var on Render.
