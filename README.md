@@ -133,6 +133,7 @@ arbitrary files. Files live on ephemeral disk (Render Free): download promptly.
 | GET | `/test/cad/download` | Milestone 1 box file download. |
 | POST | `/generate` | Full pipeline. 400 bad prompt, 422 bad spec, 500 CAD/server failure, 502 Groq failure. May return `3d_part` or `3d_assembly`. |
 | POST | `/modify` | Spec + instruction → revised spec → diff guard → files. Same response shape as `/generate`. 400 bad instruction, 422 guard/spec rejection, 500/502 as above. |
+| POST | `/remint` | Stored spec → validation → fresh STEP/STL, no AI, no diff guard. Revives expired download links as a new revision. 422 bad spec, 500 CAD failure. |
 | GET | `/components` | Deterministic component catalog (no AI, no CAD). |
 | POST | `/assembly/add` | Insert a registry component. Promotes a `3d_part` to an assembly. No AI. |
 | POST | `/assembly/update` | Parameters, transform, visibility, or name of one object. No AI. |

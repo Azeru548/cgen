@@ -42,6 +42,10 @@ Auth optional (`REQUIRE_AUTH=false` default; Firebase JWT when on).
 Errors: 400 prompt, 401 auth, 404 expired token, 422 spec/guard,
 500 CAD/config, 502 Groq/storage. No secrets/paths/tracebacks to client.
 
+File revival: `POST /remint` re-exports a stored spec as-is (no AI, no
+diff guard) and the frontend appends it as a `remint` revision, so expired
+links are revived with one click while history stays append-only.
+
 ## Frontend (`frontend/`)
 
 Next.js 16 + React 19 + R3F + Firebase. Routes: `/` landing,

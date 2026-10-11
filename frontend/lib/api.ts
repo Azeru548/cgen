@@ -212,6 +212,13 @@ export async function rebuildPart(
   return parseGenerateResponse(data);
 }
 
+export async function remintFiles(
+  specification: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<GenerateResponse> {
+  return postJson("/remint", { specification }, signal, "Re-mint files");
+}
+
 async function postJson(
   path: string,
   body: unknown,

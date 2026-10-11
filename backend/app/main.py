@@ -26,6 +26,8 @@ Milestone 7:
 Milestone 8.1:
   POST /rebuild       -> base + edited spec -> numeric guard -> CAD -> files
   (no AI on this path; topology changes rejected)
+  POST /remint        -> stored spec -> validation -> CAD -> fresh files
+  (no AI, no diff guard; revives expired download links)
 
 No auth, no DB. Ephemeral disk only.
 """
@@ -62,6 +64,7 @@ from .services.generation import (
     run_generation,
     run_modification,
     run_rebuild,
+    run_remint,
 )
 
 logger = logging.getLogger("cgen.api")
@@ -425,6 +428,46 @@ def rebuild(body: RebuildRequest, caller: Caller_):
         )
     except ModificationRejectedError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return _to_generate_response(result)
+
+
+class RemintRequest(BaseModel):
+    specification: dict = Field(
+        description="Stored valid CAD specification (3d_part or 3d_assembly) "
+        "to re-export with fresh download links."
+    )
+
+
+@app.post(
+    "/remint",
+    response_model=GenerateResponse,
+    responses={
+        400: {"description": "Invalid request: malformed specification."},
+        422: {"description": "Specification failed CAD validation."},
+        500: {"description": "CAD generation failure."},
+    },
+)
+def remint(body: RemintRequest, caller: Caller_):
+    """Re-mint fresh STEP/STL files for an expired revision. No AI on this path.
+
+    Pipeline: stored spec -> validation -> deterministic CadQuery engine ->
+    validated STEP/STL + fresh download tokens. No diff guard: the spec is
+    re-exported as-is, so identical specs succeed here where /rebuild
+    rejects them as no-ops.
+    """
+    request_id = uuid.uuid4().hex
+    try:
+        result = run_remint(
+            body.specification,
+            request_id=request_id,
+            file_store=file_store,
+            artifacts=artifact_store,
+        )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except RuntimeError as e:

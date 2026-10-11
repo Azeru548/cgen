@@ -21,6 +21,7 @@ import {
   generatePart,
   humanizeApiError,
   modifyPart,
+  remintFiles,
   removeAssemblyComponent,
   resolveFileUrl,
   updateAssemblyComponent,
@@ -439,6 +440,32 @@ export default function Home() {
     }
   }, [paramSession, status]);
 
+  // One-click file revival: an old revision's spec is re-exported as-is for
+  // fresh download links. No AI, no edits — the new revision keeps the same
+  // spec with new file URLs, so history stays append-only and honest.
+  const handleRemint = useCallback(async () => {
+    if (status === "generating" || visible === null) return;
+    const spec = visible.response.specification as unknown as Record<
+      string,
+      unknown
+    >;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setStatus("generating");
+    setGenerateError(null);
+    setPreviewError(null);
+    try {
+      const response = await remintFiles(spec, controller.signal);
+      setProject((p) => appendRevision(p, "remint", "Re-mint files", response));
+      setStatus("ready");
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setGenerateError(humanizeApiError(err as ApiError));
+      setStatus("error");
+    }
+  }, [status, visible]);
+
   const specRecord = useCallback((): Record<string, unknown> | null => {
     if (visible === null) return null;
     return visible.response.specification as unknown as Record<string, unknown>;
@@ -839,6 +866,8 @@ export default function Home() {
             status={status}
             workspace={activeWorkspace}
             onSelectRevision={handleSelectRevision}
+            onRemint={handleRemint}
+            remintBusy={busy}
             assembly={
               <>
                 <AssemblyTree

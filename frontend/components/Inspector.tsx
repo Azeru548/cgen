@@ -17,6 +17,8 @@ interface InspectorProps {
   status: string;
   workspace: Workspace;
   onSelectRevision: (revisionId: string) => void;
+  onRemint?: () => void;
+  remintBusy?: boolean;
   parametric?: ReactNode;
   assembly?: ReactNode;
 }
@@ -26,6 +28,8 @@ export function Inspector({
   status,
   workspace,
   onSelectRevision,
+  onRemint,
+  remintBusy,
   parametric,
   assembly,
 }: InspectorProps) {
@@ -45,7 +49,9 @@ export function Inspector({
               : "No specification yet. Describe a part, or add a component."}
           </div>
         )}
-        {result && status === "ready" ? <Downloads result={result} /> : null}
+        {result && status === "ready" ? (
+          <Downloads result={result} onRemint={onRemint} remintBusy={remintBusy} />
+        ) : null}
       </div>
     </>
   );

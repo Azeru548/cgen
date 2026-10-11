@@ -11,7 +11,7 @@
  */
 import type { GenerateResponse } from "@/types/api";
 
-export type RevisionKind = "generate" | "modify" | "adjust" | "assemble";
+export type RevisionKind = "generate" | "modify" | "adjust" | "assemble" | "remint";
 
 export interface Revision {
   id: string;

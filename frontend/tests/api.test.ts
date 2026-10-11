@@ -6,6 +6,7 @@ import {
   humanizeApiError,
   parseGenerateResponse,
   rebuildPart,
+  remintFiles,
   resolveFileUrl,
 } from "../lib/api";
 
@@ -221,8 +222,23 @@ describe("rebuildPart", () => {
   });
 });
 
-describe("resolveFileUrl", () => {
-  it("joins relative backend URLs against the API base", () => {
+describe("remintFiles", () => {
+  it("posts the stored spec as JSON to POST /remint", async () => {
+    const spec = SHAFT_RESPONSE.specification;
+    await remintFiles(spec as unknown as Record<string, unknown>);
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/remint$/);
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.specification).toEqual(spec);
+    expect(body).not.toHaveProperty("prompt");
+    expect(body).not.toHaveProperty("instruction");
+  });
+});
+
+describe("resolveFileUrl", () => {  it("joins relative backend URLs against the API base", () => {
     expect(resolveFileUrl("/download/TOK?format=step")).toMatch(
       /^https?:\/\/.+\/download\/TOK\?format=step$/,
     );

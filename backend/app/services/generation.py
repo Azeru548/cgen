@@ -801,3 +801,120 @@ def run_rebuild(
     except Exception as e:
         logger.warning("rebuild_failed request_id=%s error=%s", request_id, e)
         raise
+
+
+# ---------------------------------------------------------------------------
+# File revival pipeline (one-click re-mint for expired download links)
+# ---------------------------------------------------------------------------
+
+
+def run_remint(
+    specification: dict,
+    *,
+    request_id: str,
+    file_store: FileStore,
+    artifacts: ArtifactStore | None = None,
+) -> GenerationResult:
+    """Re-export fresh STEP/STL files for an already-valid stored spec.
+
+    No AI, no diff guard: the spec came from a previous successful
+    generate/modify/rebuild/assembly response, so there is nothing to
+    compare it against. Validation + deterministic CadQuery export still
+    apply, so invalid specs fail with ValueError (422) and CAD/export
+    failures with RuntimeError (500), exactly like the other pipelines.
+    """
+    logger.info("remint_started request_id=%s", request_id)
+    started = time.monotonic()
+
+    try:
+        if isinstance(specification, dict) and (
+            specification.get("document_type") == "3d_assembly"
+        ):
+            from .assembly import export_assembly_document, parse_document
+
+            doc = parse_document(specification)
+            if not isinstance(doc, AssemblySpec):
+                raise ValueError("specification must be a 3d_part or 3d_assembly.")
+            result = export_assembly_document(
+                doc, request_id=request_id, file_store=file_store, artifacts=artifacts
+            )
+            total_ms = int((time.monotonic() - started) * 1000)
+            result.generation_time_ms = total_ms
+            logger.info(
+                "remint_completed request_id=%s document=3d_assembly total_ms=%d",
+                request_id,
+                total_ms,
+            )
+            return result
+
+        new_spec = CADSpec.model_validate(specification)
+        stem = sanitize_name(new_spec.name, fallback=new_spec.operation.type)
+        if stem == "rectangular_block" and new_spec.operation.type != "box":
+            stem = default_name_for(new_spec.operation.type)
+
+        logger.info(
+            "cad_generation_started request_id=%s operation=%s",
+            request_id,
+            new_spec.operation.type,
+        )
+        cad_started = time.monotonic()
+        op = new_spec.operation
+        if isinstance(op, BoxOperation):
+            exported = cadquery_engine.export_box(
+                width=op.width, depth=op.depth, height=op.height
+            )
+        else:
+            exported = cadquery_engine.export_operation(op, name=stem)
+        cad_ms = int((time.monotonic() - cad_started) * 1000)
+
+        step_final = _rename_to_stem(Path(exported["step_path"]), stem, "step")
+        stl_final = _rename_to_stem(Path(exported["stl_path"]), stem, "stl")
+
+        checks = cadquery_engine.validate_exported_files(step_final, stl_final)
+        logger.info(
+            "file_export_completed request_id=%s step_bytes=%d stl_bytes=%d checks=%s",
+            request_id,
+            step_final.stat().st_size,
+            stl_final.stat().st_size,
+            ",".join(sorted(checks)),
+        )
+
+        urls = _deliver(
+            artifacts,
+            file_store,
+            step_path=step_final,
+            stl_path=stl_final,
+            stem=stem,
+            request_id=request_id,
+        )
+        files = {
+            "step": GeneratedFile(
+                format="step",
+                filename=step_final.name,
+                bytes=step_final.stat().st_size,
+                download_url=urls.step,
+            ),
+            "stl": GeneratedFile(
+                format="stl",
+                filename=stl_final.name,
+                bytes=stl_final.stat().st_size,
+                download_url=urls.stl,
+            ),
+        }
+        total_ms = int((time.monotonic() - started) * 1000)
+        logger.info(
+            "remint_completed request_id=%s cad_ms=%d total_ms=%d",
+            request_id,
+            cad_ms,
+            total_ms,
+        )
+        return GenerationResult(
+            request_id=request_id,
+            specification=new_spec.model_dump(),
+            units=new_spec.units,
+            files=files,
+            generation_time_ms=total_ms,
+        )
+    except Exception as e:
+        logger.warning("remint_failed request_id=%s error=%s", request_id, e)
+        raise

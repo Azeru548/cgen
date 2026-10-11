@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { Downloads } from "../components/Downloads";
 import type { GenerateResponse } from "../types/api";
 
@@ -39,5 +39,18 @@ describe("Downloads", () => {
     expect(step).toHaveAttribute("download", "shaft.step");
     expect(stl).toHaveAttribute("download", "shaft.stl");
     expect(screen.getByText("shaft.step")).toBeInTheDocument();
+  });
+
+  it("renders a Re-mint button that calls the handler", () => {
+    const onRemint = vi.fn();
+    render(<Downloads result={RESULT} onRemint={onRemint} />);
+    fireEvent.click(screen.getByRole("button", { name: /re-mint/i }));
+    expect(onRemint).toHaveBeenCalledOnce();
+  });
+
+  it("disables the Re-mint button while re-minting", () => {
+    render(<Downloads result={RESULT} onRemint={() => {}} remintBusy />);
+    const button = screen.getByText("Re-minting…");
+    expect(button).toBeDisabled();
   });
 });

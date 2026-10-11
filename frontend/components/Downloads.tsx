@@ -6,9 +6,11 @@ import { formatBytes } from "@/lib/spec";
 
 interface DownloadsProps {
   result: GenerateResponse;
+  onRemint?: () => void;
+  remintBusy?: boolean;
 }
 
-export function Downloads({ result }: DownloadsProps) {
+export function Downloads({ result, onRemint, remintBusy }: DownloadsProps) {
   const entries = [result.files.step, result.files.stl];
   return (
     <section className="panel" aria-labelledby="files-heading" data-testid="files-panel">
@@ -39,6 +41,17 @@ export function Downloads({ result }: DownloadsProps) {
         Download links expire after ~1h or on server restart; the spec is
         kept — re-run Generate/Rebuild for fresh links.
       </p>
+      {onRemint ? (
+        <button
+          type="button"
+          className="download-button"
+          onClick={onRemint}
+          disabled={remintBusy}
+          aria-label="Re-mint fresh STEP and STL files for this revision"
+        >
+          {remintBusy ? "Re-minting…" : "Re-mint files"}
+        </button>
+      ) : null}
     </section>
   );
 }
