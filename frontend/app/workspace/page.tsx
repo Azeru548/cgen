@@ -53,6 +53,16 @@ import type { Project } from "@/types/revisions";
 type PageStatus = "idle" | "generating" | "ready" | "error";
 type AppView = "home" | "workspace";
 
+interface PlacementDraft {
+  name: string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  instances: Array<{
+    position: [number, number, number];
+    rotation: [number, number, number];
+  }>;
+}
+
 const MAX_PROMPT_LENGTH = 2000;
 
 function detectWebgl(): boolean {
@@ -105,6 +115,11 @@ export default function Home() {
   const [visibilityDraft, setVisibilityDraft] = useState<Record<string, boolean>>(
     {},
   );
+  // Placement is a draft until Apply. Keeping it per object is what makes a
+  // moved object stay put when the selection changes (or is cleared).
+  const [placementDrafts, setPlacementDrafts] = useState<
+    Record<string, PlacementDraft>
+  >({});
   const [draftName, setDraftName] = useState("");
   const [draftPosition, setDraftPosition] = useState<[number, number, number]>([
     0, 0, 0,
@@ -136,10 +151,15 @@ export default function Home() {
     selectedInstanceRef.current = selectedInstance;
   }, [selectedInstance]);
 
+  const clearDrafts = useCallback(() => {
+    setPlacementDrafts({});
+    setVisibilityDraft({});
+  }, []);
+
   // M11: mirror the project into Firestore for signed-in users. Guests keep
   // the previous in-memory behaviour, so accounts never gate the CAD work.
   const firestoreDb = useFirestore();
-  useProjectSync(project, setProject, firestoreDb);
+  useProjectSync(project, setProject, firestoreDb, clearDrafts);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,52 +226,77 @@ export default function Home() {
       : previewCurrent && preview !== null
         ? preview.response
         : (preview?.response ?? result);
-  const objects: SceneObject[] = useMemo(() => {
+  const baseObjects: SceneObject[] = useMemo(() => {
     if (!displayResult) return [];
-    const base = sceneObjects(displayResult, resolveFileUrl, catalog);
-    return base.map((object) => {
+    return sceneObjects(displayResult, resolveFileUrl, catalog);
+  }, [displayResult, catalog]);
+
+  // Displayed scene = committed spec + every object's uncommitted placement
+  // and visibility draft. Drafts are no longer tied to the current selection.
+  const objects: SceneObject[] = useMemo(() => {
+    return baseObjects.map((object) => {
+      const placement = placementDrafts[object.id];
       const vis = visibilityDraft[object.id];
-      if (vis === undefined) return object;
-      return { ...object, visible: vis };
+      if (placement === undefined && vis === undefined) return object;
+      return {
+        ...object,
+        ...(placement === undefined
+          ? {}
+          : {
+              name: placement.name,
+              transform: {
+                position: placement.position,
+                rotation: placement.rotation,
+              },
+              instances: placement.instances,
+            }),
+        ...(vis === undefined ? {} : { visible: vis }),
+      };
     });
-  }, [displayResult, catalog, visibilityDraft]);
+  }, [baseObjects, placementDrafts, visibilityDraft]);
 
   const activeSelectedId =
     selectedId !== null && objects.some((o) => o.id === selectedId)
       ? selectedId
       : null;
+  // Dirty checks compare the draft against the committed object; the inspector
+  // renders the draft-overlaid one.
+  const selectedBase = useMemo(
+    () => baseObjects.find((o) => o.id === activeSelectedId) ?? null,
+    [baseObjects, activeSelectedId],
+  );
   const selectedObject = useMemo(
     () => objects.find((o) => o.id === activeSelectedId) ?? null,
     [objects, activeSelectedId],
   );
 
   const instancesDirty = useMemo(() => {
-    if (selectedObject === null) return false;
-    if (draftInstances.length === 0 && selectedObject.instances.length === 0) {
+    if (selectedBase === null) return false;
+    if (draftInstances.length === 0 && selectedBase.instances.length === 0) {
       return false;
     }
-    return JSON.stringify(draftInstances) !== JSON.stringify(selectedObject.instances);
-  }, [selectedObject, draftInstances]);
+    return JSON.stringify(draftInstances) !== JSON.stringify(selectedBase.instances);
+  }, [selectedBase, draftInstances]);
 
   const placementDirty = useMemo(() => {
-    if (selectedObject === null) return false;
+    if (selectedBase === null) return false;
     const visChanged = Object.prototype.hasOwnProperty.call(
       visibilityDraft,
-      selectedObject.id,
+      selectedBase.id,
     );
     return (
-      draftName !== selectedObject.name ||
-      draftPosition[0] !== selectedObject.transform.position[0] ||
-      draftPosition[1] !== selectedObject.transform.position[1] ||
-      draftPosition[2] !== selectedObject.transform.position[2] ||
-      draftRotation[0] !== selectedObject.transform.rotation[0] ||
-      draftRotation[1] !== selectedObject.transform.rotation[1] ||
-      draftRotation[2] !== selectedObject.transform.rotation[2] ||
+      draftName !== selectedBase.name ||
+      draftPosition[0] !== selectedBase.transform.position[0] ||
+      draftPosition[1] !== selectedBase.transform.position[1] ||
+      draftPosition[2] !== selectedBase.transform.position[2] ||
+      draftRotation[0] !== selectedBase.transform.rotation[0] ||
+      draftRotation[1] !== selectedBase.transform.rotation[1] ||
+      draftRotation[2] !== selectedBase.transform.rotation[2] ||
       instancesDirty ||
       visChanged
     );
   }, [
-    selectedObject,
+    selectedBase,
     draftName,
     draftPosition,
     draftRotation,
@@ -260,9 +305,42 @@ export default function Home() {
   ]);
 
   const paramsDirty = useMemo(() => {
-    if (selectedObject === null) return false;
-    return JSON.stringify(draftParams) !== JSON.stringify(selectedObject.parameters);
-  }, [selectedObject, draftParams]);
+    if (selectedBase === null) return false;
+    return JSON.stringify(draftParams) !== JSON.stringify(selectedBase.parameters);
+  }, [selectedBase, draftParams]);
+
+  /** Keep the scene-level draft in sync with an edit to the selected object. */
+  const rememberPlacement = useCallback(
+    (id: string, patch: Partial<PlacementDraft>) => {
+      setPlacementDrafts((prev) => {
+        const shown = objects.find((object) => object.id === id);
+        if (shown === undefined) return prev;
+        const current: PlacementDraft = prev[id] ?? {
+          name: shown.name,
+          position: shown.transform.position,
+          rotation: shown.transform.rotation,
+          instances: shown.instances,
+        };
+        return { ...prev, [id]: { ...current, ...patch } };
+      });
+    },
+    [objects],
+  );
+
+  const forgetDraft = useCallback((id: string) => {
+    setPlacementDrafts((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setVisibilityDraft((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }, []);
 
   const handleMoveStart = useCallback(() => {
     if (selectedObject === null) return;
@@ -283,46 +361,56 @@ export default function Home() {
       const origin = moveOriginRef.current;
       if (origin === null) return;
       const active = selectedInstanceRef.current;
+      const activeId = activeSelectedId;
       // A specific instance of a repeated component moves alone; otherwise the
       // whole component (its transform plus every instance) moves as one.
       if (active >= 0) {
         const index = Math.min(active, origin.instances.length - 1);
         if (index < 0) return;
-        setDraftInstances(
-          origin.instances.map((inst, i) =>
-            i === index
-              ? {
-                  position: [
-                    inst.position[0] + delta[0],
-                    inst.position[1] + delta[1],
-                    inst.position[2] + delta[2],
-                  ] as [number, number, number],
-                  rotation: inst.rotation,
-                }
-              : inst,
-          ),
+        const nextInstances = origin.instances.map((inst, i) =>
+          i === index
+            ? {
+                position: [
+                  inst.position[0] + delta[0],
+                  inst.position[1] + delta[1],
+                  inst.position[2] + delta[2],
+                ] as [number, number, number],
+                rotation: inst.rotation,
+              }
+            : inst,
         );
+        setDraftInstances(nextInstances);
+        if (activeId !== null) {
+          rememberPlacement(activeId, { instances: nextInstances });
+        }
         return;
       }
-      setDraftPosition([
+      const nextPosition: [number, number, number] = [
         origin.position[0] + delta[0],
         origin.position[1] + delta[1],
         origin.position[2] + delta[2],
-      ]);
-      if (origin.instances.length > 0) {
-        setDraftInstances(
-          origin.instances.map((inst) => ({
-            position: [
-              inst.position[0] + delta[0],
-              inst.position[1] + delta[1],
-              inst.position[2] + delta[2],
-            ] as [number, number, number],
-            rotation: inst.rotation,
-          })),
-        );
+      ];
+      setDraftPosition(nextPosition);
+      const nextInstances =
+        origin.instances.length > 0
+          ? origin.instances.map((inst) => ({
+              position: [
+                inst.position[0] + delta[0],
+                inst.position[1] + delta[1],
+                inst.position[2] + delta[2],
+              ] as [number, number, number],
+              rotation: inst.rotation,
+            }))
+          : [];
+      if (nextInstances.length > 0) setDraftInstances(nextInstances);
+      if (activeId !== null) {
+        rememberPlacement(activeId, {
+          position: nextPosition,
+          ...(nextInstances.length > 0 ? { instances: nextInstances } : {}),
+        });
       }
     },
-    [],
+    [activeSelectedId, rememberPlacement],
   );
 
   const handleMoveEnd = useCallback(() => {
@@ -371,11 +459,11 @@ export default function Home() {
     (id: string | null, instanceIndex = -1) => {
       setSelectedId(id);
       setSelectedInstance(id === null ? -1 : instanceIndex);
-      if (id === null) return;
+      if (id === null || id === selectedId) return;
       const object = objects.find((item) => item.id === id);
       if (object) hydrateDrafts(object);
     },
-    [objects, hydrateDrafts],
+    [objects, hydrateDrafts, selectedId],
   );
 
   const handleGenerate = useCallback(async () => {
@@ -396,12 +484,13 @@ export default function Home() {
       const response = await generatePart(text, controller.signal);
       setProject((p) => appendRevision(p, "generate", text, response));
       setStatus("ready");
+      clearDrafts();
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setGenerateError(humanizeApiError(err as ApiError));
       setStatus("error");
     }
-  }, [prompt, status]);
+  }, [prompt, status, clearDrafts]);
 
   const handleModify = useCallback(async () => {
     if (status === "generating" || visible === null) return;
@@ -425,12 +514,13 @@ export default function Home() {
       );
       setProject((p) => appendRevision(p, "modify", text, response));
       setStatus("ready");
+      clearDrafts();
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setGenerateError(humanizeApiError(err as ApiError));
       setStatus("error");
     }
-  }, [prompt, status, visible]);
+  }, [prompt, status, visible, clearDrafts]);
 
   const handleParamCommit = useCallback(async () => {
     if (status === "generating") return;
@@ -472,8 +562,8 @@ export default function Home() {
   }, [visible]);
 
   const commitAssembly = useCallback(
-    async (label: string, work: () => Promise<GenerateResponse>) => {
-      if (status === "generating") return;
+    async (label: string, work: () => Promise<GenerateResponse>): Promise<boolean> => {
+      if (status === "generating") return false;
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
@@ -483,11 +573,12 @@ export default function Home() {
         const response = await work();
         setProject((p) => appendRevision(p, "assemble", label, response));
         setStatus("ready");
-        setVisibilityDraft({});
+        return true;
       } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") return;
+        if (err instanceof DOMException && err.name === "AbortError") return false;
         setGenerateError(humanizeApiError(err as ApiError));
         setStatus("error");
+        return false;
       }
     },
     [status],
@@ -532,55 +623,84 @@ export default function Home() {
   const handleEditPosition = useCallback(
     (axis: 0 | 1 | 2, value: number) => {
       const active = selectedInstanceRef.current;
+      const activeId = activeSelectedId;
       if (active >= 0) {
-        setDraftInstances((prev) =>
-          prev.map((inst, i) =>
-            i === active
-              ? {
-                  position: [
-                    inst.position[0],
-                    inst.position[1],
-                    inst.position[2],
-                  ].map((v, ax) => (ax === axis ? value : v)) as [
-                    number,
-                    number,
-                    number,
-                  ],
-                  rotation: inst.rotation,
-                }
-              : inst,
-          ),
+        const nextInstances = draftInstances.map((inst, i) =>
+          i === active
+            ? {
+                position: [
+                  inst.position[0],
+                  inst.position[1],
+                  inst.position[2],
+                ].map((v, ax) => (ax === axis ? value : v)) as [
+                  number,
+                  number,
+                  number,
+                ],
+                rotation: inst.rotation,
+              }
+            : inst,
         );
+        setDraftInstances(nextInstances);
+        if (activeId !== null) {
+          rememberPlacement(activeId, { instances: nextInstances });
+        }
         return;
       }
-      setDraftPosition((prev) => {
-        const next: [number, number, number] = [...prev];
-        next[axis] = value;
-        return next;
-      });
+      const next: [number, number, number] = [...draftPosition];
+      next[axis] = value;
+      setDraftPosition(next);
+      if (activeId !== null) rememberPlacement(activeId, { position: next });
     },
-    [],
+    [activeSelectedId, draftInstances, draftPosition, rememberPlacement],
+  );
+
+  const handleEditRotation = useCallback(
+    (axis: 0 | 1 | 2, value: number) => {
+      const next: [number, number, number] = [...draftRotation];
+      next[axis] = value;
+      setDraftRotation(next);
+      if (activeSelectedId !== null) {
+        rememberPlacement(activeSelectedId, { rotation: next });
+      }
+    },
+    [activeSelectedId, draftRotation, rememberPlacement],
+  );
+
+  const handleNameChange = useCallback(
+    (value: string) => {
+      setDraftName(value);
+      if (activeSelectedId !== null) {
+        rememberPlacement(activeSelectedId, { name: value });
+      }
+    },
+    [activeSelectedId, rememberPlacement],
   );
 
   const handleApplyPlacement = useCallback(() => {
     const spec = specRecord();
     if (spec === null || activeSelectedId === null) return;
-    const vis = Object.prototype.hasOwnProperty.call(visibilityDraft, activeSelectedId)
-      ? visibilityDraft[activeSelectedId]
+    const id = activeSelectedId;
+    const vis = Object.prototype.hasOwnProperty.call(visibilityDraft, id)
+      ? visibilityDraft[id]
       : selectedObject?.visible;
-    void commitAssembly(`Place ${activeSelectedId}`, () =>
+    void commitAssembly(`Place ${id}`, () =>
       updateAssemblyComponent(
         spec,
-        activeSelectedId,
+        id,
         {
           name: draftName,
           transform: { position: draftPosition, rotation: draftRotation },
           visible: vis,
           ...(draftInstances.length > 0 ? { instances: draftInstances } : {}),
+          // Apply is one explicit commit: include the parameter draft too.
+          ...(paramsDirty ? { parameters: draftParams } : {}),
         },
         abortRef.current?.signal,
       ),
-    );
+    ).then((ok) => {
+      if (ok) forgetDraft(id);
+    });
   }, [
     specRecord,
     activeSelectedId,
@@ -589,22 +709,51 @@ export default function Home() {
     draftPosition,
     draftRotation,
     draftInstances,
+    paramsDirty,
+    draftParams,
     visibilityDraft,
     commitAssembly,
+    forgetDraft,
   ]);
 
   const handleApplyParams = useCallback(() => {
     const spec = specRecord();
     if (spec === null || activeSelectedId === null) return;
-    void commitAssembly(`Edit ${activeSelectedId}`, () =>
+    const id = activeSelectedId;
+    const vis = Object.prototype.hasOwnProperty.call(visibilityDraft, id)
+      ? visibilityDraft[id]
+      : selectedObject?.visible;
+    void commitAssembly(`Edit ${id}`, () =>
       updateAssemblyComponent(
         spec,
-        activeSelectedId,
-        { parameters: draftParams },
+        id,
+        {
+          parameters: draftParams,
+          // Commit the visible placement too, so applying parameters cannot
+          // silently discard an unsaved move.
+          name: draftName,
+          transform: { position: draftPosition, rotation: draftRotation },
+          visible: vis,
+          ...(draftInstances.length > 0 ? { instances: draftInstances } : {}),
+        },
         abortRef.current?.signal,
       ),
-    );
-  }, [specRecord, activeSelectedId, draftParams, commitAssembly]);
+    ).then((ok) => {
+      if (ok) forgetDraft(id);
+    });
+  }, [
+    specRecord,
+    activeSelectedId,
+    selectedObject,
+    draftName,
+    draftPosition,
+    draftRotation,
+    draftInstances,
+    draftParams,
+    visibilityDraft,
+    commitAssembly,
+    forgetDraft,
+  ]);
 
   const handleNewWorkspace = useCallback(() => {
     setProject((p) => addWorkspace(p, `Workspace ${p.workspaces.length + 1}`));
@@ -612,20 +761,25 @@ export default function Home() {
     setGenerateError(null);
     setPreviewError(null);
     setStatus("idle");
+    clearDrafts();
     setView("workspace");
-  }, []);
+  }, [clearDrafts]);
 
-  const handleOpenWorkspace = useCallback((workspaceId: string) => {
-    setProject((p) => {
-      const next = switchWorkspace(p, workspaceId);
+  const handleOpenWorkspace = useCallback(
+    (workspaceId: string) => {
+      // Compute outside the state updater: updaters must stay pure, and React
+      // may run them twice in development.
+      const next = switchWorkspace(project, workspaceId);
       const target = getActiveWorkspace(next);
+      setProject(next);
       setGenerateError(null);
       setPreviewError(null);
       setStatus(visibleRevision(target) === null ? "idle" : "ready");
-      return next;
-    });
-    setView("workspace");
-  }, []);
+      clearDrafts();
+      setView("workspace");
+    },
+    [project, clearDrafts],
+  );
 
   const handleGoHome = useCallback(() => {
     abortRef.current?.abort();
@@ -640,14 +794,19 @@ export default function Home() {
     setGenerateError(null);
     setPreviewError(null);
     setStatus("idle");
-  }, []);
+    clearDrafts();
+  }, [clearDrafts]);
 
-  const handleSelectRevision = useCallback((revisionId: string) => {
-    setProject((p) => selectRevision(p, revisionId));
-    setGenerateError(null);
-    setPreviewError(null);
-    setStatus("ready");
-  }, []);
+  const handleSelectRevision = useCallback(
+    (revisionId: string) => {
+      setProject((p) => selectRevision(p, revisionId));
+      setGenerateError(null);
+      setPreviewError(null);
+      setStatus("ready");
+      clearDrafts();
+    },
+    [clearDrafts],
+  );
 
   const handlePreviewStatus = useCallback(
     (state: PreviewState, message?: string) => {
@@ -754,45 +913,21 @@ export default function Home() {
           <CadViewport
             objects={objects.map((object) => {
               const isSel = object.id === activeSelectedId;
-              if (!isSel) {
-                return {
-                  id: object.id,
-                  url: object.stlUrl ?? "",
-                  position: object.transform.position,
-                  rotation: object.transform.rotation,
-                  visible: object.visible && Boolean(object.stlUrl),
-                  selected: false,
-                  instances: object.instances,
-                  activeInstanceIndex: -1,
-                  recenter:
-                    displayResult !== null &&
-                    isPartSpec(displayResult.specification),
-                };
-              }
-              if (moving && moveOrigin !== null) {
-                  return {
-                    id: object.id,
-                    url: object.stlUrl ?? "",
-                    position: moveOrigin.position,
-                    rotation: draftRotation,
-                    visible: object.visible && Boolean(object.stlUrl),
-                    selected: true,
-                    instances: moveOrigin.instances,
-                    activeInstanceIndex: selectedInstance,
-                    recenter:
-                      displayResult !== null &&
-                      isPartSpec(displayResult.specification),
-                  };
-                }
+              // While the gizmo drags, the attached group holds the live
+              // offset. Freeze the mesh at the drag origin for that frame; the
+              // final pose is already in the object's draft.
+              const frozen = isSel && moving ? moveOrigin : null;
               return {
                 id: object.id,
                 url: object.stlUrl ?? "",
-                position: draftPosition,
-                rotation: draftRotation,
+                position:
+                  frozen === null ? object.transform.position : frozen.position,
+                rotation:
+                  frozen === null ? object.transform.rotation : draftRotation,
                 visible: object.visible && Boolean(object.stlUrl),
-                selected: true,
-                instances: draftInstances,
-                activeInstanceIndex: selectedInstance,
+                selected: isSel,
+                instances: frozen === null ? object.instances : frozen.instances,
+                activeInstanceIndex: isSel ? selectedInstance : -1,
                 recenter:
                   displayResult !== null &&
                   isPartSpec(displayResult.specification),
@@ -893,15 +1028,9 @@ export default function Home() {
                   placementDirty={placementDirty}
                   paramsDirty={paramsDirty}
                   busy={busy}
-                  onName={setDraftName}
+                  onName={handleNameChange}
                   onPosition={handleEditPosition}
-                  onRotation={(axis, value) =>
-                    setDraftRotation((prev) => {
-                      const next: [number, number, number] = [...prev];
-                      next[axis] = value;
-                      return next;
-                    })
-                  }
+                  onRotation={handleEditRotation}
                   onParam={(key, value) =>
                     setDraftParams((prev) => ({ ...prev, [key]: value }))
                   }

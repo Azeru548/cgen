@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import { AuthProvider } from "@/components/AuthProvider";
 import "./globals.css";
+import "./landing.css";
 
 export const metadata: Metadata = {
-  title: "cgen - AI CAD generator",
+  title: "cgen — language to solid",
   description:
-    "Describe a part in natural language, preview the generated 3D model, and download STEP/STL CAD files.",
+    "Describe a part in plain language and get validated STEP and STL CAD files from a deterministic CadQuery engine. No code execution, append-only revisions.",
   /* Both icons are plain static files in public/ — no app/ metadata routes, so
      nothing runs image processing at request time in production. */
   icons: { icon: "/favicon.ico", apple: "/apple-touch-icon.png" },

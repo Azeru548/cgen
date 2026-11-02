@@ -27,6 +27,8 @@ export function useProjectSync(
   project: Project,
   setProject: (update: (current: Project) => Project) => void,
   db: Firestore | null,
+  /** Called after a stored project replaces the in-memory one. */
+  onProjectLoaded?: () => void,
 ) {
   const { uid, status: authStatus } = useAuth();
   const hydrated = useRef(false);
@@ -67,6 +69,7 @@ export function useProjectSync(
         if (!cancelled) {
           hydrated.current = true;
           setPhase("on");
+          onProjectLoaded?.();
         }
       } catch {
         if (!cancelled) setPhase("error");
@@ -75,7 +78,7 @@ export function useProjectSync(
     return () => {
       cancelled = true;
     };
-  }, [authStatus, db, uid, setProject]);
+  }, [authStatus, db, uid, setProject, onProjectLoaded]);
 
   /* Persist changes once hydration is done. */
   const flush = useCallback(async () => {
