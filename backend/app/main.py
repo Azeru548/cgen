@@ -88,7 +88,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    # Authorization is required when REQUIRE_AUTH=true; the browser sends the
+    # Firebase ID token as a bearer header on POSTs.
+    allow_headers=["Content-Type", "Authorization"],
     max_age=600,
 )
 
@@ -181,18 +183,16 @@ def health():
         cq_version: str | None = cq.__version__
         cq_ok = True
     except Exception as e:  # pragma: no cover - environment dependent
+        # Log the reason (not the response): health is public.
+        logger.warning("health_cadquery_import_failed error=%s", e)
         cq_version = None
         cq_ok = False
-        cq_error = str(e)
-    else:
-        cq_error = None
 
     return {
         "status": "ok",
         "service": "cgen-poc",
         "cadquery_available": cq_ok,
         "cadquery_version": cq_version,
-        "cadquery_error": cq_error,
     }
 
 
@@ -214,9 +214,10 @@ def test_cad(
         result = export_box(width=width, depth=depth, height=height)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    except RuntimeError as e:
-        # Distinguish CAD/export errors from generic 500s for the operator
-        raise HTTPException(status_code=500, detail=str(e))
+    except RuntimeError:
+        # Log the detail; the response stays free of paths/tracebacks.
+        logger.exception("test_cad_export_failed")
+        raise HTTPException(status_code=500, detail="CAD export failed.")
 
     step = Path(result["step_path"])
     stl = Path(result["stl_path"])
@@ -254,11 +255,11 @@ def test_cad(
         "operation": "box",
         "units": "mm",
         "dimensions": {"width": width, "depth": depth, "height": height},
+        # Only sizes are public: absolute server paths stay in the logs so a
+        # probe response never discloses the deployment's filesystem layout.
         "files": {
             "step_bytes": result["step_bytes"],
             "stl_bytes": result["stl_bytes"],
-            "step_path": result["step_path"],
-            "stl_path": result["stl_path"],
         },
         "validation": checks,
         "cadquery_version": result["cadquery_version"],
@@ -281,8 +282,11 @@ def test_cad_download(
 
     try:
         import cadquery as cq
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"CadQuery unavailable: {e}")
+    except Exception:
+        logger.exception("test_cad_download_import_failed")
+        raise HTTPException(
+            status_code=500, detail="CadQuery is unavailable on this deployment."
+        )
 
     try:
         solid = make_box(width=width, depth=depth, height=height)
@@ -299,8 +303,11 @@ def test_cad_download(
 
     try:
         cq.exporters.export(solid, str(path))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"{format.upper()} export failed: {e}")
+    except Exception:
+        logger.exception("test_cad_download_export_failed format=%s", format)
+        raise HTTPException(
+            status_code=500, detail=f"{format.upper()} export failed."
+        )
 
     return FileResponse(str(path), media_type=media_type, filename=path.name)
 

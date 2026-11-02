@@ -1,8 +1,9 @@
 /** Firebase app, Auth, and Firestore singletons.
  *
- *  The web config is public by design (Firebase ships it to every browser),
- *  so it comes from NEXT_PUBLIC_* env vars rather than a checked-in secret.
- *  Nothing here reads a service-role key; the backend holds that.
+ *  The web config is public by design (Firebase ships it to every browser).
+ *  NEXT_PUBLIC_* variables override the committed demo fallback below.
+ *  Nothing here reads a service-role key; the backend verifies ID tokens with
+ *  Google's public certificates, so no admin credential is needed.
  *
  *  Every export is lazy so the app still renders when Firebase is not
  *  configured — a missing key degrades to "accounts unavailable", never a
@@ -30,12 +31,12 @@ export interface FirebaseConfig {
  * Public Firebase web config for cgen.
  *
  * These identifiers are not secrets — Firebase's own setup guide has you
- * paste them into client code, and they ship to every browser. They are
- * committed so the app works on any host (e.g. pxxl.space) without anyone
- * having to configure build-time environment variables first.
+ * paste them into client code, and they ship to every browser. This is the
+ * public demo project, committed so the hosted demo works without build-time
+ * configuration; forks should override every value with their own project.
  *
- * `NEXT_PUBLIC_FIREBASE_*` still takes precedence when present, so a
- * deployment can override the project without a code change.
+ * `NEXT_PUBLIC_FIREBASE_*` takes precedence when present, so a deployment
+ * can switch projects without a code change.
  */
 const COMMITTED_FIREBASE_CONFIG: FirebaseConfig = {
   apiKey: "AIzaSyBscSEjaKsUeFgvWI1SHbip4j53eExeRBA",

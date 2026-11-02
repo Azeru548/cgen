@@ -2,8 +2,7 @@
 
 Source of truth for how cgen fits together. `README.md` is the pipeline
 contract, `PRODUCT.md` the product scope, `DESIGN.md` the visual system.
-`work.md` is a historical M9 build brief — its §16 still references the
-superseded M8 ivory/coral system; `DESIGN.md` (Precision Bench) wins.
+`DESIGN.md` (Precision Bench) wins over any older design notes.
 
 ## Pipeline
 
@@ -36,9 +35,10 @@ prompt → Groq JSON-only spec → Pydantic validation → CadQuery → STEP/STL
 ## Routes (`backend/app/main.py`)
 
 `GET /health`, `GET /test/cad`, `POST /generate`, `POST /modify`,
-`POST /rebuild`, `GET /components`, `POST /assembly/add|update|remove`,
+`POST /rebuild`, `POST /remint`, `GET /components`, `POST /assembly/add|update|remove`,
 `GET /download/{token}`, `GET /artifacts/{req}/{file}`.
-Auth optional (`REQUIRE_AUTH=false` default; Firebase JWT when on).
+Auth optional (`REQUIRE_AUTH=false` default; Firebase JWT when on; the
+frontend attaches the ID token, and CORS allows `Authorization`).
 Errors: 400 prompt, 401 auth, 404 expired token, 422 spec/guard,
 500 CAD/config, 502 Groq/storage. No secrets/paths/tracebacks to client.
 
@@ -65,7 +65,9 @@ Next.js 16 + React 19 + R3F + Firebase. Routes: `/` landing,
   (650ms debounced `/rebuild` preview), `SpecPanel`, `RevisionHistory`,
   `Downloads` (STEP authoritative; links ~1h TTL, re-run on 404).
 - API: `lib/api.ts` (`generatePart/modifyPart/rebuildPart`,
-  assembly ops, `resolveFileUrl`, `humanizeApiError` incl. 404-expired).
+  assembly ops, `resolveFileUrl`, `humanizeApiError` incl. 404-expired). When
+  a user is signed in, `AuthProvider` registers a token provider and each
+  POST carries `Authorization: Bearer <Firebase ID token>`; guests send none.
 
 ## Export model
 

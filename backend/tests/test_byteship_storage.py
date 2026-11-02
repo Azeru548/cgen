@@ -533,6 +533,10 @@ def test_path_rebuild_rejects_traversal_and_bad_format():
     assert ".." not in rebuilt
     with pytest.raises(ArtifactNotFoundError):
         artifact_path_from_name("req-1", "part.exe")
+    # A request id is a path segment too: traversal ids must not escape it.
+    for bad_id in ("..", "req/../../other", "req 1", ""):
+        with pytest.raises(ArtifactNotFoundError):
+            artifact_path_from_name(bad_id, "part.step")
 
 
 def test_artifact_endpoint_serves_stored_bytes(monkeypatch):

@@ -27,6 +27,21 @@ def test_preflight_allows_post_generate():
     assert "POST" in allow_methods
 
 
+def test_preflight_allows_authorization_header():
+    """REQUIRE_AUTH=true sends a bearer token, so the preflight must allow it."""
+    r = client.options(
+        "/generate",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type,authorization",
+        },
+    )
+    assert r.status_code == 200
+    allow_headers = r.headers.get("access-control-allow-headers", "").lower()
+    assert "authorization" in allow_headers
+
+
 def test_unlisted_origin_gets_no_cors_header():
     r = client.get("/health", headers={"Origin": "https://evil.example"})
     assert r.status_code == 200

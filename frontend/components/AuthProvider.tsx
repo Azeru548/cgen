@@ -17,6 +17,7 @@ import {
   type User,
 } from "firebase/auth";
 import { firestore, firebaseAuth, isFirebaseConfigured, persistAuthSession } from "@/lib/firebase";
+import { setAuthTokenProvider } from "@/lib/api";
 
 export type AuthStatus = "loading" | "signed-out" | "signed-in" | "unavailable";
 
@@ -47,6 +48,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       : session.user
         ? "signed-in"
         : "signed-out";
+
+  /* Protected deployments (REQUIRE_AUTH=true) need a Firebase ID token on API
+   * calls. The token is fetched per request so refreshes are automatic; a
+   * signed-out guest still reaches auth-optional deployments unchanged. */
+  useEffect(() => {
+    if (!isFirebaseConfigured) return;
+    return setAuthTokenProvider(async () => {
+      const user = firebaseAuth().currentUser;
+      return user === null ? null : user.getIdToken();
+    });
+  }, []);
 
   useEffect(() => {
     if (!isFirebaseConfigured) return;

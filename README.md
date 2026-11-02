@@ -18,7 +18,52 @@ Library insert / move / hide / param: NO LLM
   → POST /assembly/add|update|remove or POST /rebuild
 ```
 
-Live: `https://cgen-poc.onrender.com` · Docs: `GET /docs` (OpenAPI)
+Live demo: `https://cgen.pxxl.click` (frontend) · `https://cgen-poc.onrender.com`
+(backend) · Docs: `GET /docs` (OpenAPI)
+
+MIT licensed. Architecture in [`ARCHITECTURE.md`](ARCHITECTURE.md), contribution
+guide in [`CONTRIBUTING.md`](CONTRIBUTING.md), security policy in
+[`SECURITY.md`](SECURITY.md).
+
+## Quick start
+
+Two processes: the FastAPI + CadQuery backend and the Next.js frontend.
+
+**Backend** (Python 3.12; CadQuery installs a large OCP wheel):
+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+export GROQ_API_KEY=gsk_...      # required only for /generate and /modify
+uvicorn app.main:app --reload --port 8000
+```
+
+**Frontend** (Node 20+):
+
+```bash
+cd frontend
+npm ci
+cp .env.example .env.local       # points at http://localhost:8000
+npm run dev
+```
+
+Open `http://localhost:3000`. Accounts are optional: the sign-in page also has
+a guest path straight into the workspace.
+
+**Accounts (optional).** Set the `NEXT_PUBLIC_FIREBASE_*` variables to your own
+Firebase web app, publish [`firestore.rules`](firestore.rules), and enable
+Email/Password sign-in plus your frontend origin under Authentication →
+Authorized domains. Without your own config the app falls back to the public
+demo project committed in `frontend/lib/firebase.ts`; override it for any real
+deployment. `NEXT_PUBLIC_*` values are inlined at build time, so changing them
+requires a rebuild.
+
+**Production API auth (optional).** Set `REQUIRE_AUTH=true` and
+`FIREBASE_PROJECT_ID` on the backend to reject anonymous calls. The frontend
+attaches the signed-in user's Firebase ID token automatically. See
+[`SECURITY.md`](SECURITY.md) before exposing the API publicly.
 
 ## Supported operations (schema v3.2)
 
@@ -166,27 +211,31 @@ backend/
 render.yaml                   # Render Blueprint (Docker, Free)
 ```
 
-## Local development
+## Local development checks
 
-```powershell
-cd backend
-pip install -r requirements.txt
-python -m pytest tests/ -q
-uvicorn app.main:app --port 8000
+```bash
+(cd backend && python -m pytest tests/ -q)
+(cd frontend && npm run lint && npm test && npm run build)
 ```
+
+These are the same checks CI runs ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
 ## Deploy
 
-Push to GitHub; Render rebuilds from `render.yaml` (Docker). Set `GROQ_API_KEY`
-in the Render Dashboard (service → Environment); optional `GROQ_MODEL` override
-(default `openai/gpt-oss-120b`).
+**Backend.** Build `backend/Dockerfile` on any Docker host. [`render.yaml`](render.yaml)
+is a Render blueprint (Docker, free tier). Set `GROQ_API_KEY` in the host's
+dashboard; optional `GROQ_MODEL` (default `openai/gpt-oss-120b`) and
+`BYTESHIP_API_KEY` (artifact storage; server-side only). Set `CORS_ORIGINS` to
+the deployed frontend origin (comma-separated, no rebuild needed).
+
+**Frontend.** Deploy `frontend/` to any Next.js host. Set
+`NEXT_PUBLIC_API_BASE_URL` to the backend origin **at build time**; unset, it
+defaults to `http://localhost:8000`. Add the frontend origin to the backend's
+`CORS_ORIGINS`.
 
 Optional artifact storage: set `BYTESHIP_API_KEY` (server-side only) to deliver
 generated STEP/STL files through Byteship. Without it the app falls back to the
-in-process download store and behaves exactly as before. Never expose the key
-to the browser.
-
-Costs remain $0: Render Free + Groq free tier + GitHub free.
+in-process download store. Never expose the key to the browser.
 
 ## M10.2 — Artifact storage and delivery (Byteship)
 
@@ -279,25 +328,31 @@ the authoritative CAD download. No Tailwind, no component library, no
 cd frontend
 npm install
 npm test            # vitest
-npm run build       # production build (typecheck + lint)
+npm run lint        # eslint
+npm run build       # production build (typecheck)
 npm run dev         # local dev (uses NEXT_PUBLIC_API_BASE_URL)
 ```
 
 Env: `NEXT_PUBLIC_API_BASE_URL` (see `.env.example`). Unset, the client falls
-back to `http://localhost:3000` — set it explicitly to the backend origin.
+back to `http://localhost:8000` — the backend's default dev port.
 
-**Accounts (M11) need no build-time config.** The public Firebase web config is
-committed in `frontend/lib/firebase.ts`, so any host can serve accounts without
-environment variables. `NEXT_PUBLIC_FIREBASE_*` still overrides it when set.
-Because `NEXT_PUBLIC_*` values are inlined at build time, changing them
-requires a **rebuild**, not just a restart.
+**Accounts (M11).** The public demo Firebase web config is committed in
+`frontend/lib/firebase.ts`, so the hosted demo needs no build-time variables.
+Forks should set their own `NEXT_PUBLIC_FIREBASE_*` values: those override the
+demo config, and because `NEXT_PUBLIC_*` is inlined at build time, changing
+them requires a **rebuild**, not just a restart.
 
-Deploy: the frontend is served from **pxxl.space** at `https://cgen.pxxl.click/`;
-the backend is a Docker web service on Render (`render.yaml`). Add the frontend
-origin to the backend's `CORS_ORIGINS` env var on Render (comma-separated,
-runtime setting — no rebuild needed), e.g.
-`CORS_ORIGINS=http://localhost:3000,https://cgen.pxxl.click`.
+The public demo runs the frontend at `https://cgen.pxxl.click` and the backend
+as a Docker service on Render. Add your frontend origin to the backend's
+`CORS_ORIGINS` env var (comma-separated runtime setting — no rebuild needed),
+e.g. `CORS_ORIGINS=http://localhost:3000,https://your-frontend.example`.
 
 Firebase Console setup that is **not** in the repo: enable the Email/Password
 sign-in provider, and add the frontend origin under Authentication → Settings →
 Authorized domains. Publish `firestore.rules` (per-user access).
+
+## License
+
+[MIT](LICENSE). Contributions are accepted under the same license; see
+[`CONTRIBUTING.md`](CONTRIBUTING.md). For vulnerabilities, follow
+[`SECURITY.md`](SECURITY.md) rather than opening a public issue.

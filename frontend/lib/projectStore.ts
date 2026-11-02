@@ -9,8 +9,8 @@
  *  The project document holds only the shell (name + which workspace is
  *  active); each workspace document holds its lineage pointers; revisions are
  *  append-only documents. `loadProject` reassembles exactly the `Project`
- *  shape that `lib/revisions.ts` already produces, so the reducers and the
- *  existing 61 unit tests keep working unchanged.
+ *  shape that `lib/revisions.ts` already produces, so the reducers and their
+ *  unit tests keep working unchanged.
  *
  *  Access control is enforced by `firestore.rules`, not here: a document path
  *  is always built from the signed-in uid, and a caller cannot ask this module

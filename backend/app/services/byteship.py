@@ -45,6 +45,10 @@ logger = logging.getLogger(__name__)
 #: part name, so they are sanitized before they ever reach a path.
 _FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]")
 
+#: Request ids are generated with `uuid4().hex`; the artifact route is public,
+#: so anything else is rejected rather than joined into a storage path.
+_REQUEST_ID_SAFE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
 BYTESHIP_API_BASE = "https://api.byteship.dev"
 BYTESHIP_KEY_ENV = "BYTESHIP_API_KEY"
 
@@ -411,6 +415,8 @@ def artifact_path_from_name(request_id: str, filename: str) -> str:
     """
     from urllib.parse import unquote
 
+    if not _REQUEST_ID_SAFE.fullmatch(request_id):
+        raise ArtifactNotFoundError("Unknown artifact.")
     name = unquote(filename)
     stem, dot, extension = name.rpartition(".")
     if not dot or extension not in CONTENT_TYPES:

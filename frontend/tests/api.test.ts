@@ -8,6 +8,7 @@ import {
   rebuildPart,
   remintFiles,
   resolveFileUrl,
+  setAuthTokenProvider,
 } from "../lib/api";
 
 const SHAFT_RESPONSE = {
@@ -57,6 +58,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  setAuthTokenProvider(null);
 });
 
 describe("generatePart", () => {
@@ -235,6 +237,32 @@ describe("remintFiles", () => {
     expect(body.specification).toEqual(spec);
     expect(body).not.toHaveProperty("prompt");
     expect(body).not.toHaveProperty("instruction");
+  });
+});
+
+describe("auth token", () => {
+  it("attaches the signed-in Firebase ID token as a bearer header", async () => {
+    setAuthTokenProvider(async () => "id-token");
+    await generatePart("Create a shaft.");
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.headers).toMatchObject({ Authorization: "Bearer id-token" });
+  });
+
+  it("stays anonymous when the provider has no user", async () => {
+    setAuthTokenProvider(async () => null);
+    await generatePart("Create a shaft.");
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.headers).not.toHaveProperty("Authorization");
+  });
+
+  it("does not block the request when token lookup fails", async () => {
+    setAuthTokenProvider(async () => {
+      throw new Error("refresh failed");
+    });
+    const result = await generatePart("Create a shaft.");
+    expect(result.status).toBe("completed");
   });
 });
 

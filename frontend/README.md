@@ -23,6 +23,8 @@ npm run build   # production build
 npm run dev     # local dev server
 ```
 
-Deploy on pxxl.space with Root Directory `frontend` and
-`NEXT_PUBLIC_API_BASE_URL=https://cgen-poc.onrender.com`, then add the pxxl
-origin to the backend `CORS_ORIGINS` env var on Render.
+Deploy to any Next.js host with root directory `frontend` and set
+`NEXT_PUBLIC_API_BASE_URL` to your backend origin at build time (unset, it
+defaults to `http://localhost:8000`). Then add the frontend origin to the
+backend's `CORS_ORIGINS` env var. See the root [`SECURITY.md`](../SECURITY.md)
+before exposing the API.

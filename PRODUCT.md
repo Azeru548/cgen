@@ -47,7 +47,7 @@ Single-page web workstation: one top bar (logo, model library, Workspace, Clear 
 
 ## Evidence on Hand
 
-Working full-stack app in repo (frontend + backend + tests). No external marketing site, testimonials, or customer proof. No approved visual DESIGN.md.
+Working full-stack app in repo (frontend + backend + tests). No external marketing site, testimonials, or customer proof. The Precision Bench visual system is documented in DESIGN.md.
 
 ## Product Principles
 

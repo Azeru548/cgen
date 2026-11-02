@@ -60,7 +60,11 @@ export function useParametricSession(baseSpec: DocumentSpecification | null) {
   const abortRef = useRef<AbortController | null>(null);
   const committingRef = useRef(false);
   const latest = useRef({ edits, preview });
-  latest.current = { edits, preview };
+  // Refs must not be written during render; an effect keeps the freshest
+  // values available to timers and handlers, which run after this commits.
+  useEffect(() => {
+    latest.current = { edits, preview };
+  }, [edits, preview]);
 
   const descriptors = useMemo(
     () => (baseSpec === null ? [] : extractParameters(baseSpec)),

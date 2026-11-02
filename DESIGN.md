@@ -87,4 +87,4 @@ Nameplates, revision items (active = signal border, no side-stripe), model libra
 
 ## Verified
 
-- `tsc --noEmit` clean · vitest **85** · eslint 0 errors on changed files · workspace is a fixed app shell (no page scroll; inspector-only scroll) · `impeccable detect` clean on changed targets.
+- `tsc --noEmit` clean · vitest **91** · eslint 0 errors · workspace is a fixed app shell (no page scroll; inspector-only scroll).

@@ -2,3 +2,7 @@ __pycache__
 *.pyc
 .pytest_cache
 tests
+.venv
+.env
+.env.*
+*.log

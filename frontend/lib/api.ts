@@ -8,11 +8,53 @@ import type {
   ParamValue,
 } from "@/types/api";
 
+const DEFAULT_API_BASE_URL = "http://localhost:8000";
+
 export const API_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000"
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? DEFAULT_API_BASE_URL
 ).replace(/\/+$/, "");
 
 export const MAX_PROMPT_LENGTH = 2000;
+
+/** Supplies the current Firebase ID token, or null when signed out. */
+type AuthTokenProvider = () => Promise<string | null>;
+
+let authTokenProvider: AuthTokenProvider | null = null;
+
+/**
+ * Register the signed-in token provider (called once by AuthProvider).
+ *
+ * Kept as a hook rather than importing Firebase here so this module stays
+ * testable without an initialized app and guests never need accounts.
+ * Returns a cleanup that only clears its own provider.
+ */
+export function setAuthTokenProvider(
+  provider: AuthTokenProvider | null,
+): () => void {
+  authTokenProvider = provider;
+  return () => {
+    if (authTokenProvider === provider) authTokenProvider = null;
+  };
+}
+
+async function requestHeaders(json: boolean): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {};
+  if (json) headers["Content-Type"] = "application/json";
+  if (authTokenProvider !== null) {
+    let token: string | null = null;
+    try {
+      token = await authTokenProvider();
+    } catch {
+      // A token refresh failure must not block anonymous use; the backend
+      // will answer 401 if auth is enforced, and the UI explains that.
+      token = null;
+    }
+    if (token !== null && token.length > 0) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
 
 export class ApiError extends Error {
   /** HTTP status, or null for network/unreachable/malformed failures. */
@@ -112,33 +154,7 @@ export async function generatePart(
   prompt: string,
   signal?: AbortSignal,
 ): Promise<GenerateResponse> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE_URL}/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
-      signal,
-    });
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") throw err;
-    throw new ApiError("Cannot reach the CAD service.", null);
-  }
-  if (!response.ok) {
-    const detail = await readDetail(response);
-    throw new ApiError(
-      `Generation failed (HTTP ${response.status}).`,
-      response.status,
-      detail,
-    );
-  }
-  let data: unknown;
-  try {
-    data = await response.json();
-  } catch {
-    throw new ApiError("Malformed API response.", response.status);
-  }
-  return parseGenerateResponse(data);
+  return postJson("/generate", { prompt }, signal, "Generation");
 }
 
 export async function modifyPart(
@@ -146,33 +162,12 @@ export async function modifyPart(
   instruction: string,
   signal?: AbortSignal,
 ): Promise<GenerateResponse> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE_URL}/modify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ specification, instruction }),
-      signal,
-    });
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") throw err;
-    throw new ApiError("Cannot reach the CAD service.", null);
-  }
-  if (!response.ok) {
-    const detail = await readDetail(response);
-    throw new ApiError(
-      `Modification failed (HTTP ${response.status}).`,
-      response.status,
-      detail,
-    );
-  }
-  let data: unknown;
-  try {
-    data = await response.json();
-  } catch {
-    throw new ApiError("Malformed API response.", response.status);
-  }
-  return parseGenerateResponse(data);
+  return postJson(
+    "/modify",
+    { specification, instruction },
+    signal,
+    "Modification",
+  );
 }
 
 export async function rebuildPart(
@@ -180,36 +175,12 @@ export async function rebuildPart(
   specification: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<GenerateResponse> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE_URL}/rebuild`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        base_specification: baseSpecification,
-        specification,
-      }),
-      signal,
-    });
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") throw err;
-    throw new ApiError("Cannot reach the CAD service.", null);
-  }
-  if (!response.ok) {
-    const detail = await readDetail(response);
-    throw new ApiError(
-      `Rebuild failed (HTTP ${response.status}).`,
-      response.status,
-      detail,
-    );
-  }
-  let data: unknown;
-  try {
-    data = await response.json();
-  } catch {
-    throw new ApiError("Malformed API response.", response.status);
-  }
-  return parseGenerateResponse(data);
+  return postJson(
+    "/rebuild",
+    { base_specification: baseSpecification, specification },
+    signal,
+    "Rebuild",
+  );
 }
 
 export async function remintFiles(
@@ -229,7 +200,7 @@ async function postJson(
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await requestHeaders(true),
       body: JSON.stringify(body),
       signal,
     });
@@ -368,11 +339,15 @@ export function humanizeApiError(err: unknown): string {
         ? "Check your connection and that the CAD service is running."
         : err.status === 400
           ? "Check the description and try again."
-          : err.status === 404
-            ? "That download link expired. Re-run Generate or Rebuild for fresh files."
-            : err.status === 422
-            ? "The generated specification was invalid. Try rephrasing."
-            : "The CAD service could not generate this part. Try simplifying the description.";
+          : err.status === 401
+            ? "Sign in to use this CAD service, then try again."
+            : err.status === 404
+              ? "That download link expired. Re-run Generate or Rebuild for fresh files."
+              : err.status === 422
+                ? "The generated specification was invalid. Try rephrasing."
+                : err.status === 502
+                  ? "The CAD service is temporarily unavailable. Try again shortly."
+                  : "The CAD service could not generate this part. Try simplifying the description.";
     return err.detail ? `${guidance} (${err.detail})` : guidance;
   }
   return "Something went wrong. Please try again.";
