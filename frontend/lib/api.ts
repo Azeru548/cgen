@@ -16,6 +16,55 @@ export const API_BASE_URL = (
 
 export const MAX_PROMPT_LENGTH = 2000;
 
+/**
+ * Render's free tier stops the service after ~15 minutes idle, and the first
+ * request afterwards is either held until the instance boots (~30-60s) or
+ * refused outright. Network-level failures are therefore retried on a budget
+ * that covers a cold start, so opening a saved workspace re-mints its files
+ * instead of failing with a connection error the user cannot do anything
+ * about. An aborted request is never retried.
+ */
+const WAKE_RETRY_DELAYS_MS = [1000, 2500, 5000, 10000, 20000, 30000];
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** fetch() that survives a sleeping backend; throws ApiError once it gives up. */
+async function fetchWithWake(
+  path: string,
+  init: RequestInit,
+  signal?: AbortSignal,
+): Promise<Response> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await fetch(`${API_BASE_URL}${path}`, { ...init, signal });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      const offline =
+        typeof navigator !== "undefined" && navigator.onLine === false;
+      if (offline || attempt >= WAKE_RETRY_DELAYS_MS.length) {
+        throw new ApiError("Cannot reach the CAD service.", null);
+      }
+      await sleep(WAKE_RETRY_DELAYS_MS[attempt], signal);
+    }
+  }
+}
+
 /** Supplies the current Firebase ID token, or null when signed out. */
 type AuthTokenProvider = () => Promise<string | null>;
 
@@ -198,14 +247,18 @@ async function postJson(
 ): Promise<GenerateResponse> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
-      method: "POST",
-      headers: await requestHeaders(true),
-      body: JSON.stringify(body),
+    response = await fetchWithWake(
+      path,
+      {
+        method: "POST",
+        headers: await requestHeaders(true),
+        body: JSON.stringify(body),
+      },
       signal,
-    });
+    );
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") throw err;
+    if (err instanceof ApiError) throw err;
     throw new ApiError("Cannot reach the CAD service.", null);
   }
   if (!response.ok) {
@@ -230,9 +283,10 @@ export async function fetchComponentCatalog(
 ): Promise<ComponentsCatalog> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}/components`, { method: "GET", signal });
+    response = await fetchWithWake("/components", { method: "GET" }, signal);
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") throw err;
+    if (err instanceof ApiError) throw err;
     throw new ApiError("Cannot reach the CAD service.", null);
   }
   if (!response.ok) {
@@ -336,7 +390,7 @@ export function humanizeApiError(err: unknown): string {
   if (err instanceof ApiError) {
     const guidance =
       err.status === null
-        ? "Check your connection and that the CAD service is running."
+        ? "Cannot reach the CAD service. It sleeps when idle, so the first request can take up to a minute — try once more."
         : err.status === 400
           ? "Check the description and try again."
           : err.status === 401

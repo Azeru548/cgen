@@ -406,7 +406,8 @@ export function CadViewport({
           <p className="overlay-title">Preview unavailable</p>
           <p className="overlay-text">{previewError}</p>
           <p className="overlay-text overlay-note">
-            STEP/STL downloads below remain authoritative.
+            This revision&apos;s files expired. Reload to rebuild them from its
+            saved specification.
           </p>
         </div>
       ) : null}

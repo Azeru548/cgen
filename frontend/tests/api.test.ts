@@ -57,6 +57,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   setAuthTokenProvider(null);
 });
@@ -94,12 +95,56 @@ describe("generatePart", () => {
     expect((err as ApiError).detail).toContain("validation");
   });
 
-  it("throws ApiError with null status on network failure", async () => {
+  it("rides out a backend cold start and succeeds", async () => {
+    vi.useFakeTimers();
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
-    fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"));
-    const err = await generatePart("x").catch((e: unknown) => e);
+    fetchMock
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(jsonResponse(SHAFT_RESPONSE));
+
+    const pending = generatePart("x");
+    await vi.runAllTimersAsync();
+    const result = await pending;
+
+    expect(result.status).toBe("completed");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("gives up after the cold-start budget with a null-status ApiError", async () => {
+    vi.useFakeTimers();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockRejectedValue(new TypeError("fetch failed"));
+
+    const pending = generatePart("x").catch((e: unknown) => e);
+    await vi.runAllTimersAsync();
+    const err = await pending;
+
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBeNull();
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("does not retry an aborted request", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const fail = () =>
+            reject(new DOMException("Aborted", "AbortError"));
+          const signal = init?.signal;
+          if (signal?.aborted) {
+            fail();
+            return;
+          }
+          signal?.addEventListener("abort", fail);
+        }),
+    );
+    const controller = new AbortController();
+    const pending = generatePart("x", controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("rejects malformed success bodies", () => {
@@ -316,7 +361,7 @@ describe("humanizeApiError", () => {
     expect(humanizeApiError(new ApiError("x", 400, "too long"))).toContain("too long");
     expect(humanizeApiError(new ApiError("x", 422))).toContain("rephrasing");
     expect(humanizeApiError(new ApiError("x", 404))).toContain("expired");
-    expect(humanizeApiError(new ApiError("x", null))).toContain("connection");
+    expect(humanizeApiError(new ApiError("x", null))).toContain("sleeps when idle");
     expect(humanizeApiError(new Error("boom"))).toContain("try again");
   });
 });

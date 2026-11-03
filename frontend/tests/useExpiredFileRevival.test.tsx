@@ -2,8 +2,8 @@
  * The viewer's expired-file revival contract.
  *
  * Real React via renderHook; what matters is when a re-mint is allowed:
- * only for a 404, only when the viewer is idle, and never more than once per
- * workspace — otherwise a broken bucket would append revisions forever.
+ * only for a 404, only when the viewer is idle, and never more than twice per
+ * workspace — otherwise a broken store would append revisions forever.
  */
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -75,22 +75,22 @@ describe("useExpiredFileRevival", () => {
     expect(revive).toHaveBeenCalledTimes(1);
   });
 
-  it("attempts at most once per workspace, even if the 404 persists", () => {
+  it("stops after two attempts per workspace, even if the 404 persists", () => {
     const { revive, view } = setup({ error: DEAD });
     expect(revive).toHaveBeenCalledTimes(1);
 
-    // A failed re-mint leaves the same error on screen; re-renders and a new
-    // callback identity must not start a second attempt.
+    // A failed re-mint leaves the same error on screen. It may be retried once
+    // (a cold backend can swallow the first try), but never indefinitely.
     const later = vi.fn();
     view.rerender({ error: DEAD, ready: true, workspace: "ws-1", revive: later });
+    expect(later).toHaveBeenCalledTimes(1);
+
     view.rerender({ error: null, ready: true, workspace: "ws-1", revive: later });
     view.rerender({ error: DEAD, ready: true, workspace: "ws-1", revive: later });
-
-    expect(revive).toHaveBeenCalledTimes(1);
-    expect(later).not.toHaveBeenCalled();
+    expect(later).toHaveBeenCalledTimes(1);
   });
 
-  it("gives each workspace its own attempt", () => {
+  it("gives each workspace its own attempts", () => {
     const { revive, view } = setup({ error: DEAD });
     expect(revive).toHaveBeenCalledTimes(1);
 

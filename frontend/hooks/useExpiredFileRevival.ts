@@ -12,14 +12,18 @@
  * Contract:
  *  - only an `HTTP 404` preview error triggers a revival (network failures
  *    and 5xx must not mutate history);
- *  - exactly one attempt per workspace per mount: if storage itself is
- *    broken, reminting again could never succeed, so a failed attempt must
- *    not loop;
+ *  - at most two attempts per workspace per mount: a cold backend can swallow
+ *    the first one, but a genuinely broken store must not append revisions in
+ *    a loop;
  *  - a workspace that is busy is skipped WITHOUT consuming its attempt — an
  *    operation in flight owns the viewer, and the stale 404 message is
  *    retried once it settles.
  */
 import { useEffect, useRef } from "react";
+
+/** Bounded so a failing store cannot spam history, generous enough to ride
+ *  out one cold start. */
+const MAX_ATTEMPTS = 2;
 
 export function useExpiredFileRevival(
   previewError: string | null,
@@ -29,12 +33,13 @@ export function useExpiredFileRevival(
   /** Called once per workspace; expected to re-mint fresh files. */
   revive: () => void,
 ): void {
-  const revived = useRef<Set<string>>(new Set());
+  const attempts = useRef<Map<string, number>>(new Map());
   useEffect(() => {
     if (previewError === null || !/HTTP 404\b/.test(previewError)) return;
     if (!canRevive) return;
-    if (revived.current.has(workspaceId)) return;
-    revived.current.add(workspaceId);
+    const used = attempts.current.get(workspaceId) ?? 0;
+    if (used >= MAX_ATTEMPTS) return;
+    attempts.current.set(workspaceId, used + 1);
     revive();
   }, [previewError, canRevive, workspaceId, revive]);
 }
