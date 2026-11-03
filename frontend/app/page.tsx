@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { SpecimenPanel } from "@/components/landing/SpecimenPanel";
+import { LandingPing, TrackedLink } from "@/components/landing/TrackedLink";
 
 const FACTS = [
   { label: "Output", value: "STEP + STL" },
@@ -266,6 +267,7 @@ function StackDrawing() {
 export default function LandingPage() {
   return (
     <div className="lp">
+      <LandingPing />
       <header className="lp-bar">
         <div className="lp-bar-inner">
           <Link href="/" className="lp-brand" aria-label="cgen home">
@@ -321,9 +323,13 @@ export default function LandingPage() {
                 the part.
               </p>
               <div className="lp-actions">
-                <Link className="lp-cta lp-cta-lg" href="/workspace">
+                <TrackedLink
+                  className="lp-cta lp-cta-lg"
+                  href="/workspace"
+                  event="landing_cta"
+                >
                   Start building <span aria-hidden="true">→</span>
-                </Link>
+                </TrackedLink>
                 <a className="lp-ghost mono" href="#sequence">
                   See the pipeline
                 </a>
@@ -650,9 +656,13 @@ export default function LandingPage() {
               No account required to start.
             </p>
             <div className="lp-actions">
-              <Link className="lp-cta lp-cta-lg" href="/workspace">
+              <TrackedLink
+                className="lp-cta lp-cta-lg"
+                href="/workspace"
+                event="landing_cta"
+              >
                 Open the bench <span aria-hidden="true">→</span>
-              </Link>
+              </TrackedLink>
               <Link className="lp-ghost mono" href="/signin">
                 Create an account
               </Link>
@@ -694,12 +704,14 @@ export default function LandingPage() {
             <a href="#interface">API surface</a>
           </nav>
 
-          <div className="lp-foot-col">
+          <nav className="lp-foot-col" aria-label="Legal">
             <p className="lp-foot-title mono">Project</p>
             <a href="#notes">Limits &amp; notes</a>
             <a href="#assembly">Component registry</a>
+            <Link href="/privacy">Privacy</Link>
+            <Link href="/terms">Terms</Link>
             <Link href="/workspace">Try without an account</Link>
-          </div>
+          </nav>
         </div>
 
         <div className="lp-foot-bottom mono">

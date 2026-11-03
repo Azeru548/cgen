@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { useThree } from "@react-three/fiber";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
+import { ApiError, fetchArtifact } from "@/lib/api";
 
 export type PreviewState = "loading" | "ready" | "error";
 
@@ -51,10 +52,16 @@ export function StlModel({
     let cancelled = false;
     onStatus("loading");
 
-    fetch(url)
+    // Mesh bytes live behind the API origin, so the fetch needs the same
+    // cold-start tolerance as any other call: a sleeping instance answers
+    // through Render's proxy with 502/503 rather than a network error.
+    fetchArtifact(url)
       .then((response) => {
         if (!response.ok) {
-          throw new Error(`STL download failed (HTTP ${response.status}).`);
+          throw new ApiError(
+            `STL download failed (HTTP ${response.status}).`,
+            response.status,
+          );
         }
         return response.arrayBuffer();
       })

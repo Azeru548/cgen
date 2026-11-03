@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   ApiError,
   checkBackendHealth,
+  fetchArtifact,
   generatePart,
   humanizeApiError,
   parseGenerateResponse,
@@ -144,6 +145,40 @@ describe("generatePart", () => {
     const pending = generatePart("x", controller.signal);
     controller.abort();
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("retries a proxy 503 from a booting instance", async () => {
+    vi.useFakeTimers();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response("<html>waking</html>", {
+          status: 503,
+          headers: { "Content-Type": "text/html" },
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(SHAFT_RESPONSE));
+
+    const pending = generatePart("x");
+    await vi.runAllTimersAsync();
+    const result = await pending;
+
+    expect(result.status).toBe("completed");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a JSON 502 from the API itself", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ detail: "AI provider unavailable" }, 502),
+    );
+
+    const err = await generatePart("x").catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(502);
+    expect((err as ApiError).detail).toContain("AI provider");
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
@@ -363,5 +398,39 @@ describe("humanizeApiError", () => {
     expect(humanizeApiError(new ApiError("x", 404))).toContain("expired");
     expect(humanizeApiError(new ApiError("x", null))).toContain("sleeps when idle");
     expect(humanizeApiError(new Error("boom"))).toContain("try again");
+  });
+});
+
+describe("fetchArtifact", () => {
+  it("resolves delivery paths against the API and rides out a cold start", async () => {
+    vi.useFakeTimers();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(
+        new Response(new Uint8Array([1, 2, 3]), { status: 200 }),
+      );
+
+    const pending = fetchArtifact("/artifacts/req1/part.stl");
+    await vi.runAllTimersAsync();
+    const response = await pending;
+
+    expect(response.status).toBe(200);
+    expect((fetchMock.mock.calls[0] as [string])[0]).toMatch(
+      /\/artifacts\/req1\/part\.stl$/,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns a 404 straight away: a missing artifact is not a cold start", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ detail: "Artifact not found." }, 404),
+    );
+
+    const response = await fetchArtifact("/artifacts/req1/part.stl");
+
+    expect(response.status).toBe(404);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });

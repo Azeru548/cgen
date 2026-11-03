@@ -18,6 +18,7 @@ import {
 } from "firebase/auth";
 import { firestore, firebaseAuth, isFirebaseConfigured, persistAuthSession } from "@/lib/firebase";
 import { setAuthTokenProvider } from "@/lib/api";
+import { track } from "@/lib/telemetry";
 
 export type AuthStatus = "loading" | "signed-out" | "signed-in" | "unavailable";
 
@@ -99,6 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!isFirebaseConfigured) throw new Error("Accounts are not configured.");
       try {
         await signInWithEmailAndPassword(firebaseAuth(), email, password);
+        track("sign_in");
       } catch (error) {
         translate(error);
       }
@@ -111,6 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!isFirebaseConfigured) throw new Error("Accounts are not configured.");
       try {
         await createUserWithEmailAndPassword(firebaseAuth(), email, password);
+        track("sign_in");
       } catch (error) {
         translate(error);
       }
@@ -121,6 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     if (!isFirebaseConfigured) return;
     await firebaseSignOut(firebaseAuth());
+    track("sign_out");
   }, []);
 
   const user = session.user;

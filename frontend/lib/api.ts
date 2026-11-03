@@ -18,13 +18,15 @@ export const MAX_PROMPT_LENGTH = 2000;
 
 /**
  * Render's free tier stops the service after ~15 minutes idle, and the first
- * request afterwards is either held until the instance boots (~30-60s) or
- * refused outright. Network-level failures are therefore retried on a budget
- * that covers a cold start, so opening a saved workspace re-mints its files
- * instead of failing with a connection error the user cannot do anything
- * about. An aborted request is never retried.
+ * request afterwards is either held until the instance boots, answered with a
+ * proxy 502/503, or refused outright. Measured cold starts have exceeded 60s,
+ * so both failure shapes are retried on a ~2 minute budget and opening a saved
+ * workspace re-mints its files instead of failing with an error the user
+ * cannot do anything about. An aborted request is never retried.
  */
-const WAKE_RETRY_DELAYS_MS = [1000, 2500, 5000, 10000, 20000, 30000];
+const WAKE_RETRY_DELAYS_MS = [
+  1000, 2500, 5000, 10000, 15000, 20000, 30000, 30000,
+];
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -44,25 +46,59 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * Gateway codes Render's proxy returns while the instance boots. The API
+ * itself only ever answers 502 with a JSON `detail` (an AI-provider failure),
+ * so the content type distinguishes "still waking" from "really failed".
+ */
+const WAKE_GATEWAY_STATUSES = new Set([502, 503, 504]);
+
+function isProxyColdStart(response: Response): boolean {
+  if (!WAKE_GATEWAY_STATUSES.has(response.status)) return false;
+  const contentType = response.headers.get("content-type") ?? "";
+  return !contentType.includes("application/json");
+}
+
 /** fetch() that survives a sleeping backend; throws ApiError once it gives up. */
-async function fetchWithWake(
-  path: string,
+async function fetchWithWakeUrl(
+  url: string,
   init: RequestInit,
   signal?: AbortSignal,
 ): Promise<Response> {
   for (let attempt = 0; ; attempt += 1) {
+    const canRetry = attempt < WAKE_RETRY_DELAYS_MS.length;
     try {
-      return await fetch(`${API_BASE_URL}${path}`, { ...init, signal });
+      const response = await fetch(url, { ...init, signal });
+      // A booting instance answers through Render's proxy with 502/503 HTML,
+      // not a network error, so those must be retried too.
+      if (!isProxyColdStart(response) || !canRetry) return response;
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") throw err;
       const offline =
         typeof navigator !== "undefined" && navigator.onLine === false;
-      if (offline || attempt >= WAKE_RETRY_DELAYS_MS.length) {
+      if (offline || !canRetry) {
         throw new ApiError("Cannot reach the CAD service.", null);
       }
-      await sleep(WAKE_RETRY_DELAYS_MS[attempt], signal);
     }
+    await sleep(WAKE_RETRY_DELAYS_MS[attempt], signal);
   }
+}
+
+function fetchWithWake(
+  path: string,
+  init: RequestInit,
+  signal?: AbortSignal,
+): Promise<Response> {
+  return fetchWithWakeUrl(`${API_BASE_URL}${path}`, init, signal);
+}
+
+/** Fetch a generated artifact (mesh bytes, download) with the same cold-start
+ *  tolerance as API calls. Relative delivery paths resolve against the API. */
+export function fetchArtifact(
+  rawUrl: string,
+  signal?: AbortSignal,
+): Promise<Response> {
+  return fetchWithWakeUrl(resolveFileUrl(rawUrl), { method: "GET" }, signal);
 }
 
 /** Supplies the current Firebase ID token, or null when signed out. */
@@ -390,7 +426,7 @@ export function humanizeApiError(err: unknown): string {
   if (err instanceof ApiError) {
     const guidance =
       err.status === null
-        ? "Cannot reach the CAD service. It sleeps when idle, so the first request can take up to a minute — try once more."
+        ? "Cannot reach the CAD service. It sleeps when idle, so the first request after a while can take up to two minutes — try once more."
         : err.status === 400
           ? "Check the description and try again."
           : err.status === 401
@@ -399,8 +435,8 @@ export function humanizeApiError(err: unknown): string {
               ? "That download link expired. Re-run Generate or Rebuild for fresh files."
               : err.status === 422
                 ? "The generated specification was invalid. Try rephrasing."
-                : err.status === 502
-                  ? "The CAD service is temporarily unavailable. Try again shortly."
+                : err.status === 502 || err.status === 503
+                  ? "The CAD service is starting up or temporarily unavailable. Try again shortly."
                   : "The CAD service could not generate this part. Try simplifying the description.";
     return err.detail ? `${guidance} (${err.detail})` : guidance;
   }

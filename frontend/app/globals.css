@@ -2462,15 +2462,19 @@ button { font: inherit; color: inherit; }
 /* --- responsive --- */
 
 @media (max-width: 960px) {
+  /* Tablet: the model goes first. The library and inspector become two
+     scrollable strips under it instead of pushing the viewport off-screen. */
   .layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) minmax(0, 34vh);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 26vh) minmax(0, 34vh);
   }
+  .workspace-main { order: 1; }
+  .library-rail { order: 2; max-height: 26vh; }
+  .inspector { order: 3; }
   .library-rail {
     border-right: none;
     border-bottom: 1px solid var(--border-strong);
-    max-height: none;
-    overflow: visible;
+    overflow: auto;
   }
   .library-rail::before { display: none; }
   .palette {
@@ -2532,5 +2536,224 @@ button { font: inherit; color: inherit; }
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+}
+
+/* --- legal, 404 and error surfaces -------------------------------------- */
+
+.legal {
+  min-height: 100vh;
+  padding: clamp(2rem, 6vw, 5rem) 1.25rem 4rem;
+  background: var(--bg, #0e1014);
+  color: var(--ink, #f2f3f5);
+}
+
+.legal-inner {
+  max-width: 68ch;
+  margin: 0 auto;
+}
+
+.legal-eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0 0 2.25rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint, #9aa1ab);
+}
+
+.legal-eyebrow a {
+  color: var(--signal, #e04a55);
+  text-decoration: none;
+}
+
+.legal-eyebrow a:hover {
+  text-decoration: underline;
+}
+
+.legal h1 {
+  margin: 0 0 1rem;
+  font-size: clamp(2rem, 5vw, 3rem);
+  line-height: 1.05;
+  letter-spacing: -0.015em;
+}
+
+.legal-lede {
+  margin: 0 0 2.5rem;
+  font-size: 1.02rem;
+  line-height: 1.65;
+  color: var(--ink-secondary, #c3c8d0);
+}
+
+.legal h2 {
+  margin: 2.5rem 0 0.75rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--signal, #e04a55);
+}
+
+.legal p,
+.legal li {
+  font-size: 0.95rem;
+  line-height: 1.7;
+  color: var(--ink-secondary, #c3c8d0);
+}
+
+.legal ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.legal strong {
+  color: var(--ink, #f2f3f5);
+  font-weight: 600;
+}
+
+.legal a {
+  color: var(--ink, #f2f3f5);
+  text-decoration-color: var(--signal, #e04a55);
+  text-underline-offset: 3px;
+}
+
+.legal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.85rem;
+  margin: 2rem 0 0;
+}
+
+.legal-actions button.lp-cta {
+  cursor: pointer;
+}
+
+.legal-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 3.5rem 0 0;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border, #23262d);
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint, #9aa1ab);
+}
+
+.legal-foot a {
+  color: var(--ink-faint, #9aa1ab);
+  text-decoration: none;
+}
+
+.legal-foot a:hover {
+  color: var(--ink, #f2f3f5);
+}
+
+/* --- phone workspace: page-scroll shell --------------------------------- */
+/* Under 720px the fixed 100dvh grid squeezes three panes into one screen, so
+   the model ends up a sliver and the spec panel is a 34vh sliver that cannot
+   scroll. Here the workspace becomes a normal scrolling page in a deliberate
+   order — model, prompt, spec, components — with the prompt bar pinned so it
+   stays reachable while the model is on screen. */
+
+@media (max-width: 720px) {
+  .workspace {
+    height: auto;
+    max-height: none;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+  }
+
+  .topbar .session-action {
+    padding: 0.42rem 0.55rem;
+    font-size: 0.6rem;
+    letter-spacing: 0.04em;
+  }
+
+  .layout {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    min-height: 0;
+  }
+
+  .workspace-main {
+    order: 1;
+    padding: 0;
+    gap: var(--space-2);
+    min-height: 0;
+  }
+
+  .viewport {
+    /* A phone should show the part, not a thumbnail of it. */
+    min-height: max(52dvh, 320px);
+  }
+
+  .prompt-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+  }
+
+  .inspector {
+    order: 2;
+    height: 64dvh;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    border-left: 1px solid var(--border-strong);
+    border-top: 1px solid var(--border-strong);
+    overflow: hidden;
+  }
+
+  .library-rail {
+    order: 3;
+    max-height: 46dvh;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    overflow: auto;
+  }
+
+  /* Touch targets: the toolbar and the spec tabs are the two things a thumb
+     has to hit repeatedly. */
+  .session-action,
+  .inspector-tab,
+  .palette-toggle {
+    min-height: 2.25rem;
+  }
+
+  /* The floating camera gizmo sits in the corner a thumb covers. */
+  .viewport .gizmo-helper,
+  .viewport [class*="gizmo"] {
+    transform: scale(0.82);
+    transform-origin: bottom right;
+  }
+}
+
+@media (max-width: 420px) {
+  .layout {
+    padding: 0.5rem;
+  }
+
+  .topbar {
+    gap: 0.4rem;
+  }
+
+  .inspector {
+    height: 70dvh;
   }
 }

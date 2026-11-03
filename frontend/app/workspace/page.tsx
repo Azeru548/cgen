@@ -14,6 +14,7 @@ import { WorkspaceHome } from "@/components/WorkspaceHome";
 import { AccountChip } from "@/components/AccountChip";
 import { useFirestore } from "@/components/AuthProvider";
 import { useExpiredFileRevival } from "@/hooks/useExpiredFileRevival";
+import { track } from "@/lib/telemetry";
 import { useProjectSync } from "@/hooks/useProjectSync";
 import {
   addAssemblyComponent,
@@ -193,6 +194,11 @@ export default function Home() {
 
   useEffect(() => {
     return () => abortRef.current?.abort();
+  }, []);
+
+  // One "workspace opened" per visit: the denominator for launch-day funnels.
+  useEffect(() => {
+    track("workspace_open");
   }, []);
 
   const activeWorkspace = useMemo(() => getActiveWorkspace(project), [project]);
@@ -480,14 +486,17 @@ export default function Home() {
     setStatus("generating");
     setGenerateError(null);
     setPreviewError(null);
+    track("generate_started");
     try {
       const text = prompt.trim();
       const response = await generatePart(text, controller.signal);
       setProject((p) => appendRevision(p, "generate", text, response));
       setStatus("ready");
       clearDrafts();
+      track("generate_completed");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
+      track("generate_failed");
       setGenerateError(humanizeApiError(err as ApiError));
       setStatus("error");
     }
@@ -506,6 +515,7 @@ export default function Home() {
     setStatus("generating");
     setGenerateError(null);
     setPreviewError(null);
+    track("modify_started");
     try {
       const text = prompt.trim();
       const response = await modifyPart(
@@ -516,8 +526,10 @@ export default function Home() {
       setProject((p) => appendRevision(p, "modify", text, response));
       setStatus("ready");
       clearDrafts();
+      track("modify_completed");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
+      track("modify_failed");
       setGenerateError(humanizeApiError(err as ApiError));
       setStatus("error");
     }
@@ -816,6 +828,7 @@ export default function Home() {
       setPreviewError(null);
       setStatus("ready");
       clearDrafts();
+      track("revision_selected");
     },
     [clearDrafts],
   );

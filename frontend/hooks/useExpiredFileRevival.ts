@@ -20,6 +20,7 @@
  *    retried once it settles.
  */
 import { useEffect, useRef } from "react";
+import { track } from "@/lib/telemetry";
 
 /** Bounded so a failing store cannot spam history, generous enough to ride
  *  out one cold start. */
@@ -40,6 +41,7 @@ export function useExpiredFileRevival(
     const used = attempts.current.get(workspaceId) ?? 0;
     if (used >= MAX_ATTEMPTS) return;
     attempts.current.set(workspaceId, used + 1);
+    track("files_expired");
     revive();
   }, [previewError, canRevive, workspaceId, revive]);
 }

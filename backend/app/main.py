@@ -42,9 +42,9 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from .ai import groq_client
@@ -57,6 +57,13 @@ from .services.byteship import (
     default_artifact_store,
 )
 from .services.file_store import FileStore
+from .services.limits import limiter, rate_limit, telemetry_limiter, telemetry_rate_limit
+from .services.telemetry import (
+    ALLOWED_EVENTS,
+    clean_context,
+    clean_message,
+    telemetry,
+)
 from .services.generation import (
     InvalidModificationError,
     InvalidPromptError,
@@ -172,6 +179,71 @@ def _to_generate_response(result) -> GenerateResponse:
         generation_time_ms=result.generation_time_ms,
         files={key: _to_file_meta(meta) for key, meta in result.files.items()},
         component_files=component_files,
+    )
+
+
+class TelemetryEventRequest(BaseModel):
+    name: str = Field(description="Event name from the fixed launch vocabulary.")
+    path: str | None = Field(default=None, description="PAGE path, no query string.")
+
+
+class ClientErrorRequest(BaseModel):
+    message: str = Field(description="Error message, truncated server-side.")
+    path: str | None = Field(default=None, description="PAGE path where it happened.")
+    stack: str | None = Field(default=None, description="Optional trimmed stack.")
+
+
+@app.post(
+    "/telemetry/event",
+    status_code=204,
+    dependencies=[Depends(telemetry_rate_limit)],
+)
+def record_event(body: TelemetryEventRequest) -> Response:
+    """Count one product event. Aggregates only; nothing identifying.
+
+    The vocabulary is closed (`ALLOWED_EVENTS`) so this public endpoint cannot
+    be used to write arbitrary text into the server log stream.
+    """
+    if body.name not in ALLOWED_EVENTS:
+        raise HTTPException(status_code=400, detail="Unknown event name.")
+    telemetry.record_event(body.name)
+    logger.info(
+        "client_event name=%s path=%s", body.name, clean_context(body.path or "-")
+    )
+    return Response(status_code=204)
+
+
+@app.post(
+    "/telemetry/error",
+    status_code=204,
+    dependencies=[Depends(telemetry_rate_limit)],
+)
+def record_client_error(body: ClientErrorRequest) -> Response:
+    """Log an uncaught browser error so launch-day failures are visible."""
+    telemetry.record_client_error()
+    logger.warning(
+        "client_error message=%s path=%s stack=%s",
+        clean_message(body.message),
+        clean_context(body.path or "-"),
+        clean_context(body.stack or "-"),
+    )
+    return Response(status_code=204)
+
+
+@app.get("/metrics")
+def metrics():
+    """Today's launch counters, aggregate only (no prompts, no identifiers)."""
+    return JSONResponse(
+        {
+            "version": app.version,
+            "artifact_storage": (
+                "byteship" if isinstance(artifact_store, ByteshipArtifactStore) else "local"
+            ),
+            "client_errors": telemetry.snapshot()["client_errors"],
+            "events": telemetry.snapshot()["events"],
+            "limits": limiter.usage(),
+            "telemetry_limited": telemetry_limiter.usage()["operations_today"],
+        }
     )
 
 
@@ -315,6 +387,7 @@ def test_cad_download(
 @app.post(
     "/generate",
     response_model=GenerateResponse,
+    dependencies=[Depends(rate_limit)],
     responses={
         400: {"description": "Invalid request: empty or oversized prompt."},
         422: {"description": "AI specification failed CAD validation."},
@@ -353,6 +426,7 @@ def generate(body: GenerateRequest, caller: Caller_):
 @app.post(
     "/modify",
     response_model=GenerateResponse,
+    dependencies=[Depends(rate_limit)],
     responses={
         400: {"description": "Invalid request: empty instruction or invalid specification."},
         422: {"description": "Modification rejected by diff guard or CAD validation failed."},
@@ -408,6 +482,7 @@ class RebuildRequest(BaseModel):
 @app.post(
     "/rebuild",
     response_model=GenerateResponse,
+    dependencies=[Depends(rate_limit)],
     responses={
         400: {"description": "Invalid request: malformed specifications."},
         422: {
@@ -453,6 +528,7 @@ class RemintRequest(BaseModel):
 @app.post(
     "/remint",
     response_model=GenerateResponse,
+    dependencies=[Depends(rate_limit)],
     responses={
         400: {"description": "Invalid request: malformed specification."},
         422: {"description": "Specification failed CAD validation."},
@@ -553,6 +629,7 @@ def list_components():
 @app.post(
     "/assembly/add",
     response_model=GenerateResponse,
+    dependencies=[Depends(rate_limit)],
     responses={
         400: {"description": "Invalid request."},
         422: {"description": "Unknown component, bad parameters, or CAD validation."},
@@ -587,6 +664,7 @@ def assembly_add(body: AssemblyAddRequest, caller: Caller_):
 @app.post(
     "/assembly/remove",
     response_model=GenerateResponse,
+    dependencies=[Depends(rate_limit)],
     responses={
         400: {"description": "Invalid request."},
         422: {"description": "Unknown component or last-object removal."},
@@ -619,6 +697,7 @@ def assembly_remove(body: AssemblyRemoveRequest, caller: Caller_):
 @app.post(
     "/assembly/update",
     response_model=GenerateResponse,
+    dependencies=[Depends(rate_limit)],
     responses={
         400: {"description": "Invalid request."},
         422: {"description": "Unknown component or invalid parameters."},

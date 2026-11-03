@@ -2,6 +2,7 @@
 
 import type { GenerateResponse } from "@/types/api";
 import { resolveFileUrl } from "@/lib/api";
+import { track } from "@/lib/telemetry";
 import { formatBytes } from "@/lib/spec";
 
 interface DownloadsProps {
@@ -29,6 +30,7 @@ export function Downloads({ result, onRemint, remintBusy }: DownloadsProps) {
               className="download-button"
               href={resolveFileUrl(file.download_url)}
               download={file.filename}
+              onClick={() => track("download_clicked")}
               aria-label={`Download ${file.format.toUpperCase()} file ${file.filename}`}
             >
               Download

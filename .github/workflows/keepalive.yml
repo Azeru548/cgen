@@ -1,0 +1,43 @@
+name: Keepalive
+
+# Render Free stops an idle service after ~15 minutes and the next visitor
+# waits 30-90s for it to boot. This pings /health so launch-day traffic finds a
+# warm instance instead of a blue spinner.
+#
+# Caveat, stated plainly: GitHub throttles scheduled workflows and this is best
+# effort, not a guarantee (it can run late by tens of minutes, and GitHub
+# disables schedules in a repository with no activity for 60 days). For a real
+# uptime guarantee point a monitor (UptimeRobot, cron-job.org, Better Stack) at
+# the same /health URL — see README "Launch operations".
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    name: Wake the API
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: GET /health
+        env:
+          HEALTH_URL: ${{ vars.HEALTH_URL || 'https://cgen-poc.onrender.com/health' }}
+        run: |
+          set -u
+          for attempt in 1 2 3; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 100 "$HEALTH_URL" || echo 000)
+            echo "attempt $attempt -> HTTP $code"
+            if [ "$code" = "200" ]; then
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::The API did not answer 200 within the window; it may be down rather than asleep."
+          exit 1

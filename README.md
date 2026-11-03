@@ -184,6 +184,10 @@ arbitrary files. Files live on ephemeral disk (Render Free): download promptly.
 | POST | `/assembly/update` | Parameters, transform, visibility, or name of one object. No AI. |
 | POST | `/assembly/remove` | Remove one object (not the last). No AI. |
 | GET | `/download/{token}` | Token file download. 400 bad format, 404 unknown/expired token or lost file. |
+| GET | `/artifacts/{request_id}/{filename}` | Same-origin stream of a stored artifact (Byteship is the system of record; the CDN sends no CORS headers). |
+| POST | `/telemetry/event` | Count one product event from a closed vocabulary. 204, 400 unknown name. |
+| POST | `/telemetry/error` | Log one uncaught browser error (message/path/stack, truncated). 204. |
+| GET | `/metrics` | Today's aggregate counters: events, client errors, limiter usage, artifact backend. No prompts, no identifiers. |
 
 Errors never expose keys, paths, or tracebacks; details are logged server-side
 with the `request_id` (`generation_started`, `ai_spec_generated`,
@@ -236,6 +240,45 @@ defaults to `http://localhost:8000`. Add the frontend origin to the backend's
 Optional artifact storage: set `BYTESHIP_API_KEY` (server-side only) to deliver
 generated STEP/STL files through Byteship. Without it the app falls back to the
 in-process download store. Never expose the key to the browser.
+
+Set `NEXT_PUBLIC_SITE_URL` on the frontend (build time) to the public origin,
+so canonical links, `robots.txt`, `sitemap.xml` and the Open Graph tags point at
+the real domain instead of the fallback. Regenerate the social card with
+`node frontend/scripts/make-og.js` after changing the copy on it.
+
+## Launch operations
+
+**Abuse limits.** `/generate`, `/modify`, `/rebuild`, `/remint` and
+`/assembly/*` are anonymous when `REQUIRE_AUTH` is false, and each costs Groq
+credits or CAD CPU. Two limits are enforced *before* any of that work starts
+([`backend/app/services/limits.py`](backend/app/services/limits.py)):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RATE_LIMIT_PER_MINUTE` | `20` | Sliding one-minute window per client address. `0` disables. |
+| `DAILY_OPERATION_LIMIT` | `500` | Global costly operations per UTC day. `0` disables. |
+
+Rejected requests get `429` with `Retry-After` and are *not* charged to the
+daily budget, so a retry loop cannot starve the day. Limits are in-process,
+matching Render Free's single instance. To require sign-in instead, set
+`REQUIRE_AUTH=true` and `FIREBASE_PROJECT_ID`.
+
+**Launch day visibility.** `GET /metrics` returns today's aggregate event
+counts, client error count and limiter usage. Events are names only
+(`generate_completed`, `landing_cta`, …) with no prompt text and no user id;
+`POST /telemetry/error` records uncaught browser errors and render crashes into
+the same log stream as the API. Both endpoints are rate limited separately and
+accept no free-form event names.
+
+**Keep-alive.** Render Free sleeps after ~15 minutes idle; the next visitor
+waits 30–90s. [`.github/workflows/keepalive.yml`](.github/workflows/keepalive.yml)
+pings `/health` every 10 minutes so launch traffic finds a warm instance. GitHub
+throttles schedules, so treat it as best effort: for a real uptime guarantee
+point any monitor (UptimeRobot, cron-job.org, Better Stack) at the same `/health`
+URL, and override the target with the repository variable `HEALTH_URL`.
+
+**Legal and metadata.** `/privacy`, `/terms`, `robots.txt`, `sitemap.xml` and
+a custom 404 ship with the frontend; `/og.png` is the 1200×630 unfurl card.
 
 ## M10.2 — Artifact storage and delivery (Byteship)
 

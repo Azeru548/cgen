@@ -31,3 +31,11 @@ services:
         sync: false
       - key: REQUIRE_AUTH
         value: "false"
+      # M13: public-launch limits. Both are enforced before any AI or CAD work,
+      # so a script cannot drain the Groq key or the instance in one afternoon.
+      # Set either to 0 to disable that limit. Tune in the Render Dashboard
+      # without a rebuild.
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "20"
+      - key: DAILY_OPERATION_LIMIT
+        value: "500"
