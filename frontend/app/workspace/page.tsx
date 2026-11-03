@@ -13,6 +13,7 @@ import { ParametricPanel } from "@/components/ParametricPanel";
 import { WorkspaceHome } from "@/components/WorkspaceHome";
 import { AccountChip } from "@/components/AccountChip";
 import { useFirestore } from "@/components/AuthProvider";
+import { useExpiredFileRevival } from "@/hooks/useExpiredFileRevival";
 import { useProjectSync } from "@/hooks/useProjectSync";
 import {
   addAssemblyComponent,
@@ -555,6 +556,17 @@ export default function Home() {
       setStatus("error");
     }
   }, [status, visible]);
+
+  // Expired-file revival: a saved revision can reference files whose delivery
+  // is gone (backend restart, another deployment), so opening it 404s. The
+  // spec is authoritative, so re-mint fresh files once per workspace instead
+  // of leaving the viewer dead on the overlay.
+  useExpiredFileRevival(
+    previewError,
+    visible !== null && status !== "generating",
+    activeWorkspace.id,
+    handleRemint,
+  );
 
   const specRecord = useCallback((): Record<string, unknown> | null => {
     if (visible === null) return null;
