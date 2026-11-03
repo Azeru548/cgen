@@ -32,11 +32,23 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
   const [open, setOpen] = useState<ComponentCategory | null>(null);
   const [anchor, setAnchor] = useState<{ top: number; left: number } | null>(null);
   const [query, setQuery] = useState("");
+  /* Below the workspace breakpoint the library is a stacked accordion: the
+   * list opens in the page flow instead of in a fixed flyout, which on a phone
+   * is clipped or pushed off-screen. */
+  const [compact, setCompact] = useState(false);
   const rootRef = useRef<HTMLElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const toggleRefs = useRef(new Map<ComponentCategory, HTMLButtonElement | null>());
 
   const normalizedQuery = query.trim().toLowerCase();
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 960px)");
+    const sync = () => setCompact(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
 
   const anchorFor = useCallback((cat: ComponentCategory) => {
     const rect = toggleRefs.current.get(cat)?.getBoundingClientRect();
@@ -54,7 +66,8 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
       setAnchor(null);
       return;
     }
-    setAnchor(anchorFor(cat));
+    // The inline accordion needs no measured anchor.
+    setAnchor(compact ? null : anchorFor(cat));
     setOpen(cat);
   };
 
@@ -68,7 +81,7 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
    * events — closing here made the dropdown unusable. Re-anchor to the toggle
    * instead, so the panel stays usable and correctly placed. */
   const reanchor = useCallback(() => {
-    if (open === null) return;
+    if (open === null || compact) return;
     const next = anchorFor(open);
     if (!next) {
       close();
@@ -77,7 +90,7 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
     setAnchor((prev) =>
       prev && prev.top === next.top && prev.left === next.left ? prev : next,
     );
-  }, [open, anchorFor, close]);
+  }, [open, compact, anchorFor, close]);
 
   useEffect(() => {
     if (open === null) return undefined;
@@ -141,6 +154,69 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
     ? CATEGORIES.filter((cat) => (grouped.get(cat.id) ?? []).length > 0)
     : CATEGORIES;
 
+  const listFor = (items: CatalogComponent[]) => (
+    <ul className="browser-list">
+      {items.map((item) => (
+        <li key={item.type} className="browser-row">
+          <div>
+            <div className="browser-name">
+              {item.display_name}
+              <span className="browser-cat mono">{item.category}</span>
+            </div>
+            <div className="browser-desc">{item.description}</div>
+          </div>
+          <button
+            type="button"
+            className="browser-add"
+            disabled={busy}
+            onClick={() => onAdd(item.type, 1)}
+            aria-label={`Add ${item.display_name}`}
+          >
+            Add
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+
+  /* Tablet/phone: the list unfolds inside the accordion, in the page flow. */
+  function panelFor(
+    cat: { id: ComponentCategory; label: string },
+    items: CatalogComponent[],
+    expanded: boolean,
+  ) {
+    if (compact) {
+      return (
+        <div
+          id={`palette-panel-${cat.id}`}
+          className="palette-panel palette-panel-inline"
+          role="region"
+          aria-label={`${cat.label} components`}
+        >
+          <div className="palette-panel-inner">{listFor(items)}</div>
+        </div>
+      );
+    }
+    if (!expanded || !anchor) return null;
+    return createPortal(
+      <div
+        id={`palette-panel-${cat.id}`}
+        ref={panelRef}
+        className="palette-panel palette-panel-floating"
+        role="region"
+        aria-label={`${cat.label} components`}
+        style={{ top: anchor.top, left: anchor.left }}
+        /* Keep wheel and drag inside the list: they must never orbit or pan
+         * the WebGL canvas behind the overlay. */
+        onWheel={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <div className="palette-panel-inner">{listFor(items)}</div>
+      </div>,
+      document.body,
+    );
+  }
+
   return (
     <nav
       ref={rootRef}
@@ -191,50 +267,7 @@ export function ComponentBrowser({ catalog, busy, onAdd }: ComponentBrowserProps
                   {expanded ? "−" : "+"}
                 </span>
               </button>
-              {expanded && anchor
-                ? createPortal(
-                    <div
-                      id={`palette-panel-${cat.id}`}
-                      ref={panelRef}
-                      className="palette-panel palette-panel-floating"
-                      role="region"
-                      aria-label={`${cat.label} components`}
-                      style={{ top: anchor.top, left: anchor.left }}
-                      /* Keep wheel and drag inside the list: they must never
-                       * orbit or pan the WebGL canvas behind the overlay. */
-                      onWheel={(event) => event.stopPropagation()}
-                      onPointerDown={(event) => event.stopPropagation()}
-                    >
-                      <div className="palette-panel-inner">
-                        <ul className="browser-list">
-                          {items.map((item) => (
-                            <li key={item.type} className="browser-row">
-                              <div>
-                                <div className="browser-name">
-                                  {item.display_name}
-                                  <span className="browser-cat mono">
-                                    {item.category}
-                                  </span>
-                                </div>
-                                <div className="browser-desc">{item.description}</div>
-                              </div>
-                              <button
-                                type="button"
-                                className="browser-add"
-                                disabled={busy}
-                                onClick={() => onAdd(item.type, 1)}
-                                aria-label={`Add ${item.display_name}`}
-                              >
-                                Add
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>,
-                    document.body,
-                  )
-                : null}
+              {expanded ? panelFor(cat, items, expanded) : null}
             </div>
           );
         })}

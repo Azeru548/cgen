@@ -2462,52 +2462,123 @@ button { font: inherit; color: inherit; }
 /* --- responsive --- */
 
 @media (max-width: 960px) {
-  /* Tablet: the model goes first. The library and inspector become two
-     scrollable strips under it instead of pushing the viewport off-screen. */
-  .layout {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) minmax(0, 26vh) minmax(0, 34vh);
+  /* Tablet / phone: the bench becomes a single scrolling page.
+
+     The fixed-height, three-band shell used to fight the browser: `100dvh`
+     changes as mobile chrome collapses, and each band scrolled on its own, so
+     the page visibly jumped while you scrolled. Here the shell flows normally,
+     the page scrolls once, and the model gets one stable height. */
+  .workspace {
+    height: auto;
+    max-height: none;
+    min-height: 100svh;
+    overflow: visible;
+    animation: none;
   }
-  .workspace-main { order: 1; }
-  .library-rail { order: 2; max-height: 26vh; }
-  .inspector { order: 3; }
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    gap: 0.55rem;
+    padding-left: 0.85rem;
+    padding-right: 0.85rem;
+  }
+  .layout {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    min-height: 0;
+  }
+  .workspace-main {
+    order: 1;
+    overflow: visible;
+    padding: var(--space-2);
+    gap: var(--space-2);
+  }
+  /* A fixed well: the canvas never resizes while you type, scroll or select. */
+  .viewport {
+    flex: 0 0 auto;
+    height: clamp(260px, 46svh, 440px);
+    min-height: 0;
+  }
+  /* Vertical swipes scroll the page; horizontal drags still orbit; two
+     fingers still dolly/pan (pinch-zoom is not delegated to the browser). */
+  .viewport canvas,
+  .viewport > div {
+    touch-action: pan-y !important;
+  }
+  .viewport-toolbar {
+    left: 0.6rem;
+    right: 0.6rem;
+    bottom: 0.55rem;
+  }
+  .viewport-hint { display: none; }
+  /* A short well plus the example list leaves no room for a disabled Reset
+     button; hide it rather than let it sit under the copy. */
+  .viewport:has([data-testid="empty-state"]) .viewport-toolbar { display: none; }
   .library-rail {
+    order: 2;
+    max-height: none;
+    overflow: visible;
     border-right: none;
-    border-bottom: 1px solid var(--border-strong);
-    overflow: auto;
+    border-top: 1px solid var(--border-strong);
   }
   .library-rail::before { display: none; }
+  .inspector {
+    order: 3;
+    max-height: none;
+    overflow: visible;
+    border-left: none;
+    border-top: 1px solid var(--border-strong);
+  }
+  .inspector::before { display: none; }
+  .inspector-header { position: static; }
+  .inspector-body {
+    overflow: visible;
+    overscroll-behavior: auto;
+  }
+  .home-main { width: min(1100px, calc(100% - 1.5rem)); }
+  .tray-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
+}
+
+@media (max-width: 960px) {
+  /* The library is a stacked accordion, not a row of dropdowns: its list opens
+     in the flow of the page (see ComponentBrowser's inline panel), so it can
+     never land off-screen the way a fixed flyout does. */
   .palette {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-    padding: 0.55rem 0.75rem;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0.75rem 0.8rem 0.9rem;
   }
   .palette-label {
     width: 100%;
-    border-bottom: none;
-    padding-bottom: 0;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.35rem;
   }
   .palette-cats {
-    flex-direction: row;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 0.3rem;
   }
-  .palette-toggle { width: auto; }
-  .palette-panel {
-    top: calc(100% + 0.4rem);
-    left: 0;
+  .palette-toggle {
+    width: 100%;
+    padding: 0.6rem 0.7rem;
+    font-size: 0.86rem;
   }
-  .inspector {
-    border-left: none;
-    border-top: 1px solid var(--border-strong);
+  .palette-panel-inline {
+    position: static;
+    width: auto;
+    margin-top: 0.3rem;
+    border-color: var(--border);
+    box-shadow: none;
+    animation: none;
+  }
+  .palette-panel-inline .palette-panel-inner {
     max-height: none;
+    overflow: visible;
+    padding: 0.2rem 0.55rem 0.45rem;
   }
-  .inspector::before { display: none; }
-  .viewport { min-height: 0; }
-  .workspace-main { padding: var(--space-2); gap: var(--space-2); }
-  .home-main { width: min(1100px, calc(100% - 1.5rem)); }
-  .tray-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
-  .topbar { gap: 0.55rem; padding-left: 0.85rem; padding-right: 0.85rem; }
+  .browser-row { padding: 0.55rem 0; }
+  .browser-add { min-height: 2.5rem; padding: 0 0.9rem; }
 }
 
 @media (max-width: 720px) {
@@ -2518,6 +2589,7 @@ button { font: inherit; color: inherit; }
     padding-bottom: 0.45rem;
   }
   .topbar-spacer { display: none; }
+  .topbar .session-action { min-height: 2.25rem; padding: 0 0.7rem; }
 }
 
 @media (max-width: 640px) {
@@ -2657,103 +2729,20 @@ button { font: inherit; color: inherit; }
   color: var(--ink, #f2f3f5);
 }
 
-/* --- phone workspace: page-scroll shell --------------------------------- */
-/* Under 720px the fixed 100dvh grid squeezes three panes into one screen, so
-   the model ends up a sliver and the spec panel is a 34vh sliver that cannot
-   scroll. Here the workspace becomes a normal scrolling page in a deliberate
-   order — model, prompt, spec, components — with the prompt bar pinned so it
-   stays reachable while the model is on screen. */
+/* --- phone workspace: extras on top of the 960px flow ------------------ */
+/* The shell itself already scrolls as one page under 960px; these are only
+   thumb-sized controls and a slightly shorter well for small screens. */
 
 @media (max-width: 720px) {
-  .workspace {
-    height: auto;
-    max-height: none;
-    min-height: 100dvh;
-    overflow: visible;
-  }
-
-  .topbar {
-    position: sticky;
-    top: 0;
-    z-index: 30;
-  }
-
-  .topbar .session-action {
-    padding: 0.42rem 0.55rem;
-    font-size: 0.6rem;
-    letter-spacing: 0.04em;
-  }
-
-  .layout {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    padding: var(--space-2);
-    min-height: 0;
-  }
-
-  .workspace-main {
-    order: 1;
-    padding: 0;
-    gap: var(--space-2);
-    min-height: 0;
-  }
-
-  .viewport {
-    /* A phone should show the part, not a thumbnail of it. */
-    min-height: max(52dvh, 320px);
-  }
-
-  .prompt-bar {
-    position: sticky;
-    bottom: 0;
-    z-index: 20;
-  }
-
-  .inspector {
-    order: 2;
-    height: 64dvh;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    border-left: 1px solid var(--border-strong);
-    border-top: 1px solid var(--border-strong);
-    overflow: hidden;
-  }
-
-  .library-rail {
-    order: 3;
-    max-height: 46dvh;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
-    overflow: auto;
-  }
-
-  /* Touch targets: the toolbar and the spec tabs are the two things a thumb
-     has to hit repeatedly. */
-  .session-action,
-  .inspector-tab,
-  .palette-toggle {
-    min-height: 2.25rem;
-  }
-
-  /* The floating camera gizmo sits in the corner a thumb covers. */
-  .viewport .gizmo-helper,
-  .viewport [class*="gizmo"] {
-    transform: scale(0.82);
-    transform-origin: bottom right;
-  }
+  .topbar .session-action { font-size: 0.66rem; }
+  .palette-toggle,
+  .viewport-reset,
+  .browser-add { min-height: 2.5rem; }
+  .viewport { height: clamp(260px, 44svh, 380px); }
 }
 
 @media (max-width: 420px) {
-  .layout {
-    padding: 0.5rem;
-  }
-
-  .topbar {
-    gap: 0.4rem;
-  }
-
-  .inspector {
-    height: 70dvh;
-  }
+  .workspace-main { padding: 0.5rem; }
+  .topbar { gap: 0.4rem; }
 }
+
