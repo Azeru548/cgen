@@ -45,6 +45,32 @@ def test_through_tool_height_math():
         cadquery_engine.through_tool_height(5, 5)
 
 
+def test_stl_tolerances_default_and_env(monkeypatch):
+    # The mesh resolution is a launch-quality knob: defaults must be finer than
+    # CadQuery's 0.1 mm / 0.1 rad, and both must be overridable per environment.
+    monkeypatch.delenv("STL_TOLERANCE", raising=False)
+    monkeypatch.delenv("STL_ANGULAR_TOLERANCE", raising=False)
+    assert cadquery_engine.stl_tolerances() == (
+        cadquery_engine.STL_TOLERANCE_DEFAULT,
+        cadquery_engine.STL_ANGULAR_TOLERANCE_DEFAULT,
+    )
+    assert cadquery_engine.STL_TOLERANCE_DEFAULT < 0.1
+
+    monkeypatch.setenv("STL_TOLERANCE", "0.05")
+    monkeypatch.setenv("STL_ANGULAR_TOLERANCE", "0.2")
+    assert cadquery_engine.stl_tolerances() == (0.05, 0.2)
+
+
+def test_stl_tolerances_ignore_bad_values(monkeypatch):
+    # A typo in the Render dashboard must not coarsen or break export.
+    monkeypatch.setenv("STL_TOLERANCE", "coarse")
+    monkeypatch.setenv("STL_ANGULAR_TOLERANCE", "0")
+    assert cadquery_engine.stl_tolerances() == (
+        cadquery_engine.STL_TOLERANCE_DEFAULT,
+        cadquery_engine.STL_ANGULAR_TOLERANCE_DEFAULT,
+    )
+
+
 def test_build_rejects_unknown_operation():
     need_cq()
     with pytest.raises(ValueError, match="Unsupported operation"):

@@ -621,6 +621,51 @@ button { font: inherit; color: inherit; }
   pointer-events: none;
 }
 
+.viewport-controls,
+.viewport-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+/* Surface finish switch — the only viewport control that changes the model's
+   look rather than the camera. Compact enough to sit beside the hint. */
+.material-switch {
+  pointer-events: auto;
+  display: flex;
+  align-items: stretch;
+  background: rgba(14, 16, 20, 0.85);
+  border: 1px solid rgba(232, 234, 237, 0.18);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.material-option {
+  font-family: var(--sans);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(232, 234, 237, 0.55);
+  background: transparent;
+  border: none;
+  border-right: 1px solid rgba(232, 234, 237, 0.12);
+  padding: 0.42rem 0.6rem;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.material-option:last-child { border-right: none; }
+
+.material-option:hover { color: rgba(232, 234, 237, 0.9); }
+
+.material-option.is-active {
+  color: #fff;
+  background: rgba(204, 41, 54, 0.28);
+  box-shadow: inset 0 -2px 0 var(--signal);
+}
+
 .viewport-hint {
   font-family: var(--mono);
   font-size: 0.6rem;
@@ -630,15 +675,20 @@ button { font: inherit; color: inherit; }
   border: 1px solid rgba(232, 234, 237, 0.1);
   border-radius: 2px;
   padding: 0.3rem 0.65rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .viewport-reset {
   pointer-events: auto;
+  flex: none;
   font-family: var(--sans);
   font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  white-space: nowrap;
   color: rgba(232, 234, 237, 0.9);
   background: rgba(14, 16, 20, 0.85);
   border: 1px solid rgba(232, 234, 237, 0.18);
@@ -2739,6 +2789,13 @@ button { font: inherit; color: inherit; }
   .viewport-reset,
   .browser-add { min-height: 2.5rem; }
   .viewport { height: clamp(260px, 44svh, 380px); }
+  /* Three finishes plus two actions do not fit one phone row: let the toolbar
+     wrap upward instead of shrinking the targets. */
+  .viewport-toolbar { flex-wrap: wrap; align-items: flex-end; gap: 0.4rem; }
+  .viewport-controls { flex: 1 1 100%; }
+  .viewport-actions { flex: 1 1 100%; justify-content: flex-end; }
+  .material-option { padding: 0.5rem 0.55rem; font-size: 0.6rem; }
+  .viewport-reset { padding: 0.4rem 0.55rem; font-size: 0.68rem; }
 }
 
 @media (max-width: 420px) {

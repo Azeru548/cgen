@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { useThree } from "@react-three/fiber";
+import { Edges } from "@react-three/drei";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { ApiError, fetchArtifact } from "@/lib/api";
+import { DEFAULT_MATERIAL_ID, materialById, type MaterialId } from "@/lib/materials";
 
 export type PreviewState = "loading" | "ready" | "error";
 
@@ -24,6 +26,8 @@ interface StlModelProps {
   /** Index within the component's instance list; -1 for single-pose parts. */
   instanceIndex?: number;
   onSelect?: (id: string, instanceIndex: number) => void;
+  /** Display-only surface preset; never affects the exported geometry. */
+  material?: MaterialId;
 }
 
 /** Fetches an STL URL, parses it to BufferGeometry, centers it on the
@@ -44,6 +48,7 @@ export function StlModel({
   objectId,
   instanceIndex = -1,
   onSelect,
+  material = DEFAULT_MATERIAL_ID,
 }: StlModelProps) {
   const geometryRef = useRef<THREE.BufferGeometry | null>(null);
   const [geometry, setGeometry] = useState<THREE.BufferGeometry | null>(null);
@@ -105,6 +110,7 @@ export function StlModel({
   const rx = (rotationDeg?.[0] ?? 0) * DEG;
   const ry = (rotationDeg?.[1] ?? 0) * DEG;
   const rz = (rotationDeg?.[2] ?? 0) * DEG;
+  const surface = materialById(material);
   return (
     <mesh
       userData={{ cgenContent: true }}
@@ -119,12 +125,19 @@ export function StlModel({
       }}
     >
       <meshStandardMaterial
-        color={selected ? "#e04a55" : "#9aa1ab"}
-        metalness={0.35}
-        roughness={0.45}
+        color={selected ? "#e04a55" : surface.color}
+        metalness={surface.metalness}
+        roughness={surface.roughness}
         emissive={selected ? "#8a1520" : "#000000"}
-        emissiveIntensity={selected ? 0.4 : 0}
+        emissiveIntensity={selected ? 0.35 : 0}
+        envMapIntensity={1.15}
       />
+      {/* Sharp feature edges only (threshold in degrees): this is what makes a
+          machined part read as machined. Curved tessellation is never outlined
+          because neighbouring facets differ by less than the threshold. */}
+      {selected ? (
+        <Edges threshold={28} color="#f4f6f8" scale={1.001} />
+      ) : null}
     </mesh>
   );
 }
@@ -135,6 +148,9 @@ interface FrameCameraProps {
   resetSignal: number;
   floorY: (y: number) => void;
   hasContent: boolean;
+  /** Reports the largest bounding-box dimension so the viewport can size
+   *  scene-relative effects (contact shadow plane, floor) to the part. */
+  onScale?: (maxDim: number) => void;
 }
 
 /** Frames any model size: distance derives from the bounding box, so a
@@ -147,6 +163,7 @@ export function FrameCamera({
   resetSignal,
   floorY,
   hasContent,
+  onScale,
 }: FrameCameraProps) {
   const camera = useThree((s) => s.camera);
   const controls = useThree((s) => s.controls) as unknown as {
@@ -176,6 +193,7 @@ export function FrameCamera({
     const measured = measure();
     if (!measured) return;
     const { maxDim, minY } = measured;
+    onScale?.(maxDim);
     const perspective = camera as THREE.PerspectiveCamera;
     const fov = ((perspective.fov || 40) * Math.PI) / 180;
     const distance = ((maxDim / 2) / Math.tan(fov / 2)) * 1.6;
@@ -188,7 +206,7 @@ export function FrameCamera({
     controls?.update();
     lastFramedRef.current = maxDim;
     floorY(minY);
-  }, [measure, camera, controls, floorY]);
+  }, [measure, camera, controls, floorY, onScale]);
 
   useEffect(() => {
     if (!hasContent) {
@@ -199,6 +217,7 @@ export function FrameCamera({
     const measured = measure();
     if (!measured) return;
     floorY(measured.minY);
+    onScale?.(measured.maxDim);
     const firstLoad = !hadGeometryRef.current;
     hadGeometryRef.current = true;
     const last = lastFramedRef.current;
@@ -207,7 +226,7 @@ export function FrameCamera({
     if (firstLoad || largeChange) {
       frame();
     }
-  }, [contentRev, hasContent, measure, frame, floorY]);
+  }, [contentRev, hasContent, measure, frame, floorY, onScale]);
 
   useEffect(() => {
     if (resetSignal > 0) frame();

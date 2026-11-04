@@ -2,16 +2,20 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useThree } from "@react-three/fiber";
 import {
+  ContactShadows,
+  Environment,
   GizmoHelper,
   GizmoViewport,
   Grid,
+  Lightformer,
   OrbitControls,
   TransformControls,
 } from "@react-three/drei";
 import { FrameCamera, StlModel, type PreviewState } from "./StlModel";
 import { GenerationLoader } from "../GenerationLoader";
+import { DEFAULT_MATERIAL_ID, MATERIALS, type MaterialId } from "@/lib/materials";
 
 export const EXAMPLE_PROMPTS = [
   "Create a 100mm × 60mm × 30mm rectangular block.",
@@ -70,6 +74,7 @@ function SelectableObject({
   onSelectObject,
   liveScale,
   onOrbitEnabledChange,
+  material,
 }: {
   object: SceneViewObject;
   canDrag: boolean;
@@ -81,6 +86,7 @@ function SelectableObject({
   onSelectObject?: (id: string | null) => void;
   liveScale?: [number, number, number] | null;
   onOrbitEnabledChange?: (enabled: boolean) => void;
+  material: MaterialId;
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const dragRef = useRef(false);
@@ -139,6 +145,7 @@ function SelectableObject({
                 objectId={object.id}
                 instanceIndex={index}
                 onSelect={onSelectObject}
+                material={material}
               />
             </group>
           ))}
@@ -157,6 +164,7 @@ function SelectableObject({
             objectId={object.id}
             instanceIndex={-1}
             onSelect={onSelectObject}
+            material={material}
           />
         </group>
       )}
@@ -214,6 +222,8 @@ function DragGroup({
   floorY,
   hasContent,
   onOrbitEnabledChange,
+  material,
+  onScale,
 }: {
   objects: SceneViewObject[];
   canDrag: boolean;
@@ -229,6 +239,8 @@ function DragGroup({
   floorY: (y: number) => void;
   hasContent: boolean;
   onOrbitEnabledChange?: (enabled: boolean) => void;
+  material: MaterialId;
+  onScale: (maxDim: number) => void;
 }) {
   const [outerNode, setOuterNode] = useState<THREE.Group | null>(null);
 
@@ -247,6 +259,7 @@ function DragGroup({
           onSelectObject={onSelectObject}
           liveScale={liveScale}
           onOrbitEnabledChange={onOrbitEnabledChange}
+          material={material}
         />
       ))}
 
@@ -256,9 +269,25 @@ function DragGroup({
         resetSignal={resetSignal}
         floorY={floorY}
         hasContent={hasContent}
+        onScale={onScale}
       />
     </group>
   );
+}
+
+/** Exposes the live WebGL canvas so the toolbar can save a PNG frame.
+ *  (`preserveDrawingBuffer` on the renderer keeps the buffer readable after
+ *  the frame is presented.) */
+function CaptureTarget({
+  onCanvas,
+}: {
+  onCanvas: (canvas: HTMLCanvasElement | null) => void;
+}) {
+  const gl = useThree((state) => state.gl);
+  useEffect(() => {
+    onCanvas(gl.domElement);
+  }, [gl, onCanvas]);
+  return null;
 }
 
 export function CadViewport({
@@ -279,13 +308,37 @@ export function CadViewport({
   const [resetSignal, setResetSignal] = useState(0);
   const [floorY, setFloorY] = useState(0);
   const [orbitEnabled, setOrbitEnabled] = useState(true);
+  const [sceneScale, setSceneScale] = useState(120);
+  const [material, setMaterial] = useState<MaterialId>(DEFAULT_MATERIAL_ID);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const handleFloorY = useCallback((y: number) => setFloorY(y), []);
+  const handleScale = useCallback((maxDim: number) => {
+    setSceneScale((prev) => (prev === maxDim ? prev : maxDim));
+  }, []);
+  const handleCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
+    canvasRef.current = canvas;
+  }, []);
   const handleGeometry = useCallback(() => {
     setContentRev((n) => n + 1);
   }, []);
   const handleOrbitEnabled = useCallback((enabled: boolean) => {
     setOrbitEnabled(enabled);
   }, []);
+
+  const chooseMaterial = useCallback((id: MaterialId) => {
+    setMaterial(id);
+  }, []);
+
+  const handleSnapshot = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const link = document.createElement("a");
+    link.href = canvas.toDataURL("image/png");
+    link.download = `cgen-${stamp}.png`;
+    link.click();
+  }, []);
+
   const visible = objects.filter((o) => o.visible && o.url);
   const showEmpty = visible.length === 0 && !busy && !previewError;
 
@@ -294,12 +347,51 @@ export function CadViewport({
       <Canvas
         camera={{ fov: 40, position: [180, 140, 180] }}
         dpr={[1, 2]}
-        gl={{ antialias: true }}
+        gl={{
+          antialias: true,
+          preserveDrawingBuffer: true,
+          toneMapping: THREE.ACESFilmicToneMapping,
+          toneMappingExposure: 1.05,
+        }}
       >
         <color attach="background" args={["#0e1014"]} />
-        <ambientLight intensity={0.85} />
-        <directionalLight position={[120, 180, 90]} intensity={1.35} />
-        <directionalLight position={[-100, 60, -120]} intensity={0.45} />
+        <CaptureTarget onCanvas={handleCanvas} />
+        <ambientLight intensity={0.35} />
+        <directionalLight position={[120, 180, 90]} intensity={1.1} />
+        {/* A studio built from emissive panels instead of an HDRI file: no
+            network request, no CDN, and the reflections can be art-directed. */}
+        <Environment resolution={128} frames={1}>
+          <Lightformer
+            form="rect"
+            intensity={5}
+            position={[0, 6, -7]}
+            scale={[12, 5, 1]}
+            color="#ffffff"
+          />
+          <Lightformer
+            form="rect"
+            intensity={2.4}
+            position={[-7, 3, 3]}
+            rotation={[0, Math.PI / 2, 0]}
+            scale={[9, 6, 1]}
+            color="#cfe0ff"
+          />
+          <Lightformer
+            form="rect"
+            intensity={1.8}
+            position={[7, 1, 4]}
+            rotation={[0, -Math.PI / 2, 0]}
+            scale={[9, 6, 1]}
+            color="#ffe8d8"
+          />
+          <Lightformer
+            form="ring"
+            intensity={1.6}
+            position={[0, 7, 0]}
+            scale={[7, 7, 1]}
+            color="#ffffff"
+          />
+        </Environment>
         <Suspense fallback={null}>
           <group onPointerMissed={() => onSelectObject?.(null)}>
             <DragGroup
@@ -317,8 +409,21 @@ export function CadViewport({
               floorY={handleFloorY}
               hasContent={visible.length > 0}
               onOrbitEnabledChange={handleOrbitEnabled}
+              material={material}
+              onScale={handleScale}
             />
           </group>
+          <ContactShadows
+            key={`${contentRev}-${Math.round(sceneScale)}-${Math.round(floorY)}`}
+            position={[0, floorY + 0.2, 0]}
+            scale={Math.max(sceneScale * 3, 40)}
+            blur={2.4}
+            opacity={0.55}
+            far={Math.max(sceneScale * 0.6, 10)}
+            resolution={256}
+            frames={1}
+            color="#000000"
+          />
           <Grid
             position={[0, floorY, 0]}
             args={[10, 10]}
@@ -354,19 +459,50 @@ export function CadViewport({
       ) : null}
 
       <div className="viewport-toolbar">
-        <span className="viewport-hint">
-          drag&nbsp;·&nbsp;orbit&nbsp;&nbsp;&nbsp;wheel&nbsp;·&nbsp;zoom&nbsp;&nbsp;&nbsp;right-drag&nbsp;·&nbsp;pan
-          {canDrag ? <>&nbsp;&nbsp;&nbsp;drag object&nbsp;·&nbsp;move</> : null}
-        </span>
-        <button
-          type="button"
-          className="viewport-reset"
-          onClick={() => setResetSignal((s) => s + 1)}
-          disabled={visible.length === 0}
-          aria-label="Reset view"
-        >
-          Reset view
-        </button>
+        <div className="viewport-controls">
+          <div
+            className="material-switch"
+            role="group"
+            aria-label="Surface finish"
+          >
+            {MATERIALS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className={`material-option${material === preset.id ? " is-active" : ""}`}
+                onClick={() => chooseMaterial(preset.id)}
+                aria-pressed={material === preset.id}
+                title={`${preset.label} finish (display only)`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <span className="viewport-hint">
+            drag&nbsp;·&nbsp;orbit&nbsp;&nbsp;&nbsp;wheel&nbsp;·&nbsp;zoom&nbsp;&nbsp;&nbsp;right-drag&nbsp;·&nbsp;pan
+            {canDrag ? <>&nbsp;&nbsp;&nbsp;drag object&nbsp;·&nbsp;move</> : null}
+          </span>
+        </div>
+        <div className="viewport-actions">
+          <button
+            type="button"
+            className="viewport-reset"
+            onClick={handleSnapshot}
+            disabled={visible.length === 0}
+            title="Save this view as a PNG"
+          >
+            Snapshot
+          </button>
+          <button
+            type="button"
+            className="viewport-reset"
+            onClick={() => setResetSignal((s) => s + 1)}
+            disabled={visible.length === 0}
+            aria-label="Reset view"
+          >
+            Reset view
+          </button>
+        </div>
       </div>
 
       {showEmpty ? (

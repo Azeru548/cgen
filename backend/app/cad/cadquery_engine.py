@@ -49,6 +49,7 @@ center. The LLM never computes offsets; placement is deterministic.
 from __future__ import annotations
 
 import math
+import os
 import re
 import tempfile
 from pathlib import Path
@@ -77,6 +78,34 @@ from .schema import (
 # relative term keeps it sane for very large parts.
 THROUGH_MARGIN_MM = 2.0
 THROUGH_MARGIN_RATIO = 0.001
+
+# STL tessellation. CadQuery's defaults (0.1 mm linear deflection, 0.1 rad
+# angular) make a Ø15 bore a visible decagon and a sphere a golf ball: the mesh
+# reads as crude even when the STEP is exact. 0.01 mm is smooth at normal
+# viewing distance for parts tens of millimetres across, at a few times the
+# triangle count. Both knobs stay overridable per environment.
+STL_TOLERANCE_DEFAULT = 0.01
+STL_ANGULAR_TOLERANCE_DEFAULT = 0.1
+
+
+def _positive_env(name: str, default: float) -> float:
+    """Read a positive float from the environment, falling back silently."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def stl_tolerances() -> tuple[float, float]:
+    """(linear deflection mm, angular tolerance rad) for STL export."""
+    return (
+        _positive_env("STL_TOLERANCE", STL_TOLERANCE_DEFAULT),
+        _positive_env("STL_ANGULAR_TOLERANCE", STL_ANGULAR_TOLERANCE_DEFAULT),
+    )
 
 # Extra cutter length past a blind hole's floor so the flat tool tip cuts
 # cleanly (deterministic, not AI-supplied).
@@ -699,13 +728,19 @@ def _export_solid(solid, stem: str, out_dir: str | Path | None = None) -> dict:
 
     step_path = target / f"{stem}.step"
     stl_path = target / f"{stem}.stl"
+    tolerance, angular_tolerance = stl_tolerances()
 
     try:
         cq.exporters.export(solid, str(step_path))
     except Exception as e:
         raise RuntimeError(f"STEP export failed: {e}") from e
     try:
-        cq.exporters.export(solid, str(stl_path))
+        cq.exporters.export(
+            solid,
+            str(stl_path),
+            tolerance=tolerance,
+            angularTolerance=angular_tolerance,
+        )
     except Exception as e:
         raise RuntimeError(f"STL export failed: {e}") from e
 
@@ -741,6 +776,7 @@ def export_box(
 
     step_path = target / f"box_{width}x{depth}x{height}.step"
     stl_path = target / f"box_{width}x{depth}x{height}.stl"
+    tolerance, angular_tolerance = stl_tolerances()
 
     try:
         import cadquery as cq
@@ -752,7 +788,12 @@ def export_box(
     try:
         import cadquery as cq
 
-        cq.exporters.export(solid, str(stl_path))
+        cq.exporters.export(
+            solid,
+            str(stl_path),
+            tolerance=tolerance,
+            angularTolerance=angular_tolerance,
+        )
     except Exception as e:
         raise RuntimeError(f"STL export failed: {e}") from e
 
