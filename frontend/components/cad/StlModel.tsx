@@ -25,7 +25,7 @@ interface StlModelProps {
   objectId?: string;
   /** Index within the component's instance list; -1 for single-pose parts. */
   instanceIndex?: number;
-  onSelect?: (id: string, instanceIndex: number) => void;
+  onSelect?: (id: string, instanceIndex: number, additive: boolean) => void;
   /** Display-only surface preset; never affects the exported geometry. */
   material?: MaterialId;
 }
@@ -121,7 +121,11 @@ export function StlModel({
       onClick={(event) => {
         if (!objectId || !onSelect) return;
         event.stopPropagation();
-        onSelect(objectId, instanceIndex);
+        onSelect(
+          objectId,
+          instanceIndex,
+          event.shiftKey || event.metaKey || event.ctrlKey,
+        );
       }}
     >
       <meshStandardMaterial

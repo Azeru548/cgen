@@ -38,6 +38,8 @@ export interface SceneViewObject {
   recenter: boolean;
   /** Selected instance of a repeated component; -1 moves the component itself. */
   activeInstanceIndex?: number;
+  /** Show the move/rotate gizmo on this object (primary selection only). */
+  gizmo?: boolean;
 }
 
 interface CadViewportProps {
@@ -46,18 +48,35 @@ interface CadViewportProps {
   previewError: string | null;
   onPreviewStatus: (state: PreviewState, message?: string) => void;
   onSelectExample: (prompt: string) => void;
-  onSelectObject?: (id: string | null, instanceIndex?: number) => void;
+  onSelectObject?: (
+    id: string | null,
+    instanceIndex?: number,
+    additive?: boolean,
+  ) => void;
   /** Technical chip text shown top-left (schema/engine revision). */  schemaVersion?: string;
   /** Immediate dial-drag scale applied to the current mesh. */
   liveScale?: [number, number, number] | null;
   /** Drag selected object → world translation delta (mm). Draft only. */
   onMoveDelta?: (delta: [number, number, number]) => void;
+  /** Rotate gizmo → world Euler delta in degrees. Draft only. */
+  onRotateDelta?: (delta: [number, number, number]) => void;
   /** Drag began — parent can freeze other inputs. */
   onMoveStart?: () => void;
+  onRotateStart?: () => void;
   /** Drag ended — bake drafts; parent may reset the drag group. */
   onMoveEnd?: () => void;
   /** When false, no TransformControls (busy / no selection). */
   canDrag?: boolean;
+}
+
+type GizmoMode = "translate" | "rotate";
+
+function eulerToDeg(e: THREE.Euler): [number, number, number] {
+  return [
+    (e.x * 180) / Math.PI,
+    (e.y * 180) / Math.PI,
+    (e.z * 180) / Math.PI,
+  ];
 }
 
 /** One object = one stable group. Selection never remounts StlModel
@@ -66,8 +85,11 @@ interface CadViewportProps {
 function SelectableObject({
   object,
   canDrag,
+  gizmoMode,
   onMoveDelta,
+  onRotateDelta,
   onMoveStart,
+  onRotateStart,
   onMoveEnd,
   onGeometry,
   onPreviewStatus,
@@ -78,20 +100,29 @@ function SelectableObject({
 }: {
   object: SceneViewObject;
   canDrag: boolean;
+  gizmoMode: GizmoMode;
   onMoveDelta?: (delta: [number, number, number]) => void;
+  onRotateDelta?: (delta: [number, number, number]) => void;
   onMoveStart?: () => void;
+  onRotateStart?: () => void;
   onMoveEnd?: () => void;
   onGeometry: () => void;
   onPreviewStatus: (state: PreviewState, message?: string) => void;
-  onSelectObject?: (id: string | null) => void;
+  onSelectObject?: (
+    id: string | null,
+    instanceIndex?: number,
+    additive?: boolean,
+  ) => void;
   liveScale?: [number, number, number] | null;
   onOrbitEnabledChange?: (enabled: boolean) => void;
   material: MaterialId;
 }) {
   const groupRef = useRef<THREE.Group>(null);
+  const rotateRef = useRef<THREE.Group>(null);
   const dragRef = useRef(false);
   const [groupNode, setGroupNode] = useState<THREE.Group | null>(null);
-  const showGizmo = canDrag && object.selected && object.url.length > 0;
+  const [rotateNode, setRotateNode] = useState<THREE.Group | null>(null);
+  const showGizmo = canDrag && (object.gizmo ?? object.selected) && object.url.length > 0;
   // -1 targets the component transform (single-pose parts / whole-component
   // move); >=0 targets one instance of a repeated component.
   const activeIndex = object.activeInstanceIndex ?? -1;
@@ -105,8 +136,16 @@ function SelectableObject({
   useEffect(() => {
     if (!showGizmo) {
       groupRef.current?.position.set(0, 0, 0);
+      rotateRef.current?.rotation.set(0, 0, 0);
     }
   }, [showGizmo]);
+
+  const setRotate = useCallback((node: THREE.Group | null) => {
+    rotateRef.current = node;
+    setRotateNode(node);
+  }, []);
+
+  const pivotPosition: [number, number, number] = object.position;
 
   // NOTE: TransformControls MUST stay a sibling of the group it drives.
   // drei renders its gizmo helper as a child of wherever this element
@@ -169,7 +208,11 @@ function SelectableObject({
         </group>
       )}
 
-      {showGizmo && groupNode ? (
+      {showGizmo && gizmoMode === "rotate" ? (
+        <group ref={setRotate} position={pivotPosition} />
+      ) : null}
+
+      {showGizmo && gizmoMode === "translate" && groupNode ? (
         <TransformControls
           object={groupNode}
           mode="translate"
@@ -203,6 +246,36 @@ function SelectableObject({
           }}
         />
       ) : null}
+
+      {showGizmo && gizmoMode === "rotate" && rotateNode ? (
+        <TransformControls
+          object={rotateNode}
+          mode="rotate"
+          size={0.95}
+          onMouseDown={() => {
+            dragRef.current = true;
+            onOrbitEnabledChange?.(false);
+            onRotateStart?.();
+          }}
+          onMouseUp={() => {
+            const g = rotateRef.current;
+            const delta = g ? eulerToDeg(g.rotation) : ([0, 0, 0] as [number, number, number]);
+            dragRef.current = false;
+            onOrbitEnabledChange?.(true);
+            if (delta[0] !== 0 || delta[1] !== 0 || delta[2] !== 0) {
+              onRotateDelta?.(delta);
+            }
+            g?.rotation.set(0, 0, 0);
+            onMoveEnd?.();
+          }}
+          onObjectChange={() => {
+            if (!dragRef.current || !onRotateDelta) return;
+            const g = rotateRef.current;
+            if (!g) return;
+            onRotateDelta(eulerToDeg(g.rotation));
+          }}
+        />
+      ) : null}
     </>
   );
 }
@@ -210,8 +283,11 @@ function SelectableObject({
 function DragGroup({
   objects,
   canDrag,
+  gizmoMode,
   onMoveDelta,
+  onRotateDelta,
   onMoveStart,
+  onRotateStart,
   onMoveEnd,
   onGeometry,
   onPreviewStatus,
@@ -227,12 +303,19 @@ function DragGroup({
 }: {
   objects: SceneViewObject[];
   canDrag: boolean;
+  gizmoMode: GizmoMode;
   onMoveDelta?: (delta: [number, number, number]) => void;
+  onRotateDelta?: (delta: [number, number, number]) => void;
   onMoveStart?: () => void;
+  onRotateStart?: () => void;
   onMoveEnd?: () => void;
   onGeometry: () => void;
   onPreviewStatus: (state: PreviewState, message?: string) => void;
-  onSelectObject?: (id: string | null) => void;
+  onSelectObject?: (
+    id: string | null,
+    instanceIndex?: number,
+    additive?: boolean,
+  ) => void;
   liveScale?: [number, number, number] | null;
   contentRev: number;
   resetSignal: number;
@@ -251,8 +334,11 @@ function DragGroup({
           key={object.id}
           object={object}
           canDrag={canDrag}
+          gizmoMode={gizmoMode}
           onMoveDelta={onMoveDelta}
+          onRotateDelta={onRotateDelta}
           onMoveStart={onMoveStart}
+          onRotateStart={onRotateStart}
           onMoveEnd={onMoveEnd}
           onGeometry={onGeometry}
           onPreviewStatus={onPreviewStatus}
@@ -300,10 +386,13 @@ export function CadViewport({
   schemaVersion,
   liveScale,
   onMoveDelta,
+  onRotateDelta,
   onMoveStart,
+  onRotateStart,
   onMoveEnd,
   canDrag = false,
 }: CadViewportProps) {
+  const [gizmoMode, setGizmoMode] = useState<GizmoMode>("translate");
   const [contentRev, setContentRev] = useState(0);
   const [resetSignal, setResetSignal] = useState(0);
   const [floorY, setFloorY] = useState(0);
@@ -408,8 +497,11 @@ export function CadViewport({
             <DragGroup
               objects={visible}
               canDrag={canDrag && !busy}
+              gizmoMode={gizmoMode}
               onMoveDelta={onMoveDelta}
+              onRotateDelta={onRotateDelta}
               onMoveStart={onMoveStart}
+              onRotateStart={onRotateStart}
               onMoveEnd={onMoveEnd}
               onGeometry={handleGeometry}
               onPreviewStatus={onPreviewStatus}
@@ -476,6 +568,32 @@ export function CadViewport({
 
       <div className="viewport-toolbar">
         <div className="viewport-controls">
+          {canDrag ? (
+            <div
+              className="material-switch"
+              role="group"
+              aria-label="Move or rotate the selected part"
+            >
+              <button
+                type="button"
+                className={`material-option${gizmoMode === "translate" ? " is-active" : ""}`}
+                onClick={() => setGizmoMode("translate")}
+                aria-pressed={gizmoMode === "translate"}
+                title="Move the selected part"
+              >
+                Move
+              </button>
+              <button
+                type="button"
+                className={`material-option${gizmoMode === "rotate" ? " is-active" : ""}`}
+                onClick={() => setGizmoMode("rotate")}
+                aria-pressed={gizmoMode === "rotate"}
+                title="Rotate the selected part"
+              >
+                Rotate
+              </button>
+            </div>
+          ) : null}
           <div
             className="material-switch"
             role="group"
@@ -495,8 +613,14 @@ export function CadViewport({
             ))}
           </div>
           <span className="viewport-hint">
-            drag&nbsp;·&nbsp;orbit&nbsp;&nbsp;&nbsp;wheel&nbsp;·&nbsp;zoom&nbsp;&nbsp;&nbsp;right-drag&nbsp;·&nbsp;pan
-            {canDrag ? <>&nbsp;&nbsp;&nbsp;drag object&nbsp;·&nbsp;move</> : null}
+            drag&nbsp;·&nbsp;orbit&nbsp;&nbsp;&nbsp;shift-click&nbsp;·&nbsp;add
+            {canDrag ? (
+              gizmoMode === "rotate" ? (
+                <>&nbsp;&nbsp;&nbsp;rings&nbsp;·&nbsp;rotate part</>
+              ) : (
+                <>&nbsp;&nbsp;&nbsp;arrows&nbsp;·&nbsp;move part</>
+              )
+            ) : null}
           </span>
         </div>
         <div className="viewport-actions">

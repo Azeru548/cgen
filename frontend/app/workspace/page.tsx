@@ -36,12 +36,12 @@ import {
   groupsOf,
   isAssemblySpec,
   isPartSpec,
-  rotateSelection,
   sceneObjects,
   setSelectionLocked,
   ungroupSelection,
   type SceneObject,
 } from "@/lib/assembly";
+import { rotatePose, type Vec3 } from "@/lib/transforms";
 import { useParametricSession } from "@/lib/useParametricSession";
 import {
   addWorkspace,
@@ -175,6 +175,17 @@ export default function Home() {
       }
     >
   >({});
+  const rotateSnapshotRef = useRef<{
+    pivot: Vec3;
+    poses: Record<
+      string,
+      {
+        position: Vec3;
+        rotation: Vec3;
+        instances: Array<{ position: Vec3; rotation: Vec3 }>;
+      }
+    >;
+  } | null>(null);
   const selectedInstanceRef = useRef(selectedInstance);
   useEffect(() => {
     selectedInstanceRef.current = selectedInstance;
@@ -499,7 +510,67 @@ export default function Home() {
     setMoving(false);
     setMoveOrigin(null);
     groupMoveOriginsRef.current = {};
+    rotateSnapshotRef.current = null;
   }, []);
+
+  const handleRotateStart = useCallback(() => {
+    const seed =
+      selectedIds.length > 0
+        ? selectedIds
+        : activeSelectedId !== null
+          ? [activeSelectedId]
+          : [];
+    if (seed.length === 0) return;
+    const spec = displayResult?.specification;
+    const ids = spec ? expandSelectionToGroups(spec, seed) : seed;
+    const poses: NonNullable<typeof rotateSnapshotRef.current>["poses"] = {};
+    for (const id of ids) {
+      const object = objects.find((item) => item.id === id);
+      if (object === undefined || object.locked) continue;
+      poses[id] = {
+        position: [...object.transform.position] as Vec3,
+        rotation: [...object.transform.rotation] as Vec3,
+        instances: object.instances.map((inst) => ({
+          position: [...inst.position] as Vec3,
+          rotation: [...inst.rotation] as Vec3,
+        })),
+      };
+    }
+    if (Object.keys(poses).length === 0) return;
+    const primaryId = activeSelectedId && poses[activeSelectedId]
+      ? activeSelectedId
+      : Object.keys(poses)[0];
+    setMoving(true);
+    rotateSnapshotRef.current = {
+      pivot: poses[primaryId].position,
+      poses,
+    };
+  }, [selectedIds, activeSelectedId, displayResult, objects]);
+
+  const handleRotateDelta = useCallback(
+    (delta: [number, number, number]) => {
+      const snap = rotateSnapshotRef.current;
+      if (snap === null) return;
+      if (delta[0] === 0 && delta[1] === 0 && delta[2] === 0) return;
+      for (const [id, pose] of Object.entries(snap.poses)) {
+        const next = rotatePose(pose, delta, snap.pivot);
+        const nextInstances = pose.instances.map((inst) =>
+          rotatePose(inst, delta, snap.pivot),
+        );
+        rememberPlacement(id, {
+          position: next.position,
+          rotation: next.rotation,
+          ...(nextInstances.length > 0 ? { instances: nextInstances } : {}),
+        });
+        if (id === activeSelectedId) {
+          setDraftPosition(next.position);
+          setDraftRotation(next.rotation);
+          if (nextInstances.length > 0) setDraftInstances(nextInstances);
+        }
+      }
+    },
+    [activeSelectedId, rememberPlacement],
+  );
 
   // Instant dial feedback: scale the currently displayed mesh toward the
   // edited spec while a rebuild is pending. Cleared when the preview lands
@@ -539,11 +610,40 @@ export default function Home() {
   }, []);
 
   const handleSelectObject = useCallback(
-    (id: string | null, instanceIndex = -1) => {
+    (id: string | null, instanceIndex = -1, additive = false) => {
+      if (id === null) {
+        setSelectedId(null);
+        setSelectedIds([]);
+        setSelectedInstance(-1);
+        return;
+      }
+      if (additive) {
+        setSelectedIds((prev) => {
+          if (prev.includes(id)) {
+            const next = prev.filter((item) => item !== id);
+            if (selectedId === id) {
+              const fallback = next[0] ?? null;
+              setSelectedId(fallback);
+              setSelectedInstance(-1);
+              const object = objects.find((item) => item.id === fallback);
+              if (object) hydrateDrafts(object);
+            }
+            return next;
+          }
+          if (selectedId === null) {
+            setSelectedId(id);
+            setSelectedInstance(instanceIndex);
+            const object = objects.find((item) => item.id === id);
+            if (object) hydrateDrafts(object);
+          }
+          return [...prev, id];
+        });
+        return;
+      }
       setSelectedId(id);
-      setSelectedIds(id === null ? [] : [id]);
-      setSelectedInstance(id === null ? -1 : instanceIndex);
-      if (id === null || id === selectedId) return;
+      setSelectedIds([id]);
+      setSelectedInstance(instanceIndex);
+      if (id === selectedId) return;
       const object = objects.find((item) => item.id === id);
       if (object) hydrateDrafts(object);
     },
@@ -816,24 +916,7 @@ export default function Home() {
     );
   }, [visible, objects, selectedIds, commitSpecPatch]);
 
-  const handleRotate = useCallback(
-    (axis: 0 | 1 | 2, degrees: number) => {
-      if (visible === null) return;
-      const spec = visible.response.specification;
-      const unlocked = selectedIds.filter((id) => {
-        const object = objects.find((item) => item.id === id);
-        return object !== undefined && !object.locked;
-      });
-      const ids = expandSelectionToGroups(spec, unlocked).filter((id) => {
-        const object = objects.find((item) => item.id === id);
-        return object !== undefined && !object.locked;
-      });
-      const delta: [number, number, number] = [0, 0, 0];
-      delta[axis] = degrees;
-      commitSpecPatch("Rotate", rotateSelection(spec, ids, delta));
-    },
-    [visible, selectedIds, objects, commitSpecPatch],
-  );
+
 
   // Inspector XYZ targets the selected instance when one is active, so the
   // fields and the gizmo always manipulate the same thing.
@@ -1175,7 +1258,8 @@ export default function Home() {
                 rotation:
                   frozen === null ? object.transform.rotation : draftRotation,
                 visible: object.visible && Boolean(object.stlUrl),
-                selected: isSel,
+                selected: isSel || selectedIds.includes(object.id),
+                gizmo: isSel,
                 instances: frozen === null ? object.instances : frozen.instances,
                 activeInstanceIndex: isSel ? selectedInstance : -1,
                 recenter:
@@ -1196,6 +1280,8 @@ export default function Home() {
             }
             onMoveStart={handleMoveStart}
             onMoveDelta={handleMoveDelta}
+            onRotateStart={handleRotateStart}
+            onRotateDelta={handleRotateDelta}
             onMoveEnd={handleMoveEnd}
           />
 
@@ -1294,7 +1380,6 @@ export default function Home() {
                   onGroup={handleGroup}
                   onUngroup={handleUngroup}
                   onLock={handleLock}
-                  onRotate={handleRotate}
                   busy={busy}
                 />
                 <ObjectInspector

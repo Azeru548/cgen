@@ -17,16 +17,9 @@ interface AssemblyTreeProps {
   onGroup: () => void;
   onUngroup: () => void;
   onLock: () => void;
-  onRotate: (axis: 0 | 1 | 2, degrees: number) => void;
   onFocus?: (id: string) => void;
   busy: boolean;
 }
-
-const AXES: Array<{ axis: 0 | 1 | 2; label: string }> = [
-  { axis: 0, label: "X" },
-  { axis: 1, label: "Y" },
-  { axis: 2, label: "Z" },
-];
 
 export function AssemblyTree({
   name,
@@ -41,7 +34,6 @@ export function AssemblyTree({
   onGroup,
   onUngroup,
   onLock,
-  onRotate,
   busy,
 }: AssemblyTreeProps) {
   const selected = new Set(selectedIds);
@@ -56,9 +48,6 @@ export function AssemblyTree({
   const selectedObjects = objects.filter((object) => selected.has(object.id));
   const allLocked =
     selectedObjects.length > 0 && selectedObjects.every((object) => object.locked);
-  const canRotate =
-    selectedIds.length > 0 && selectedObjects.some((object) => !object.locked);
-
   const renderObject = (object: SceneObject, indent: boolean) => {
     const extra =
       object.instances.length > 1 ? ` × ${object.instances.length}` : "";
@@ -68,16 +57,30 @@ export function AssemblyTree({
       <li key={object.id} className={indent ? "assembly-member" : undefined}>
         <button
           type="button"
+          className={`assembly-tick${inSelection ? " is-on" : ""}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelect(object.id, true);
+          }}
+          disabled={busy}
+          aria-pressed={inSelection}
+          aria-label={
+            inSelection
+              ? `Remove ${object.name} from selection`
+              : `Add ${object.name} to selection`
+          }
+          title={inSelection ? "Remove from selection" : "Add to selection"}
+        />
+        <button
+          type="button"
           className={`assembly-item${isSelected ? " selected" : ""}${
             inSelection && !isSelected ? " co-selected" : ""
           }`}
-          onClick={(event) =>
-            onSelect(object.id, event.metaKey || event.ctrlKey || event.shiftKey)
-          }
+          onClick={() => onSelect(object.id, false)}
           disabled={busy}
           aria-current={isSelected ? "true" : undefined}
           aria-pressed={inSelection}
-          title="Click to select, ⌘/Ctrl/Shift-click to add to the selection"
+          title="Select this part"
         >
           <span className="assembly-item-name">
             {object.name}
@@ -153,8 +156,8 @@ export function AssemblyTree({
       {objects.length > 1 ? (
         <div className="assembly-bulk" data-testid="assembly-bulk">
           <p className="assembly-bulk-count mono">
-            {selectedIds.length === 0
-              ? "⌘/Ctrl/Shift-click to multi-select"
+            {selectedIds.length < 2
+              ? "Tick two or more parts, then Group"
               : `${selectedIds.length} selected`}
           </p>
           <div className="assembly-bulk-row">
@@ -165,8 +168,8 @@ export function AssemblyTree({
               disabled={busy || !canGroup}
               title={
                 canGroup
-                  ? "Group the selected objects"
-                  : "Select two or more ungrouped objects"
+                  ? "Group the ticked parts so they move and rotate together"
+                  : "Tick two or more ungrouped parts first"
               }
             >
               Group
@@ -193,33 +196,6 @@ export function AssemblyTree({
             >
               {allLocked ? "Unlock" : "Lock"}
             </button>
-          </div>
-          <div className="assembly-bulk-row" aria-label="Rotate selection">
-            {AXES.map(({ axis, label }) => (
-              <span key={label} className="assembly-rotate">
-                <span className="assembly-rotate-axis mono">{label}</span>
-                <button
-                  type="button"
-                  className="assembly-bulk-button mono"
-                  onClick={() => onRotate(axis, -90)}
-                  disabled={busy || !canRotate}
-                  aria-label={`Rotate selection ${label} minus 90 degrees`}
-                  title={`Rotate −90° about ${label}`}
-                >
-                  −90
-                </button>
-                <button
-                  type="button"
-                  className="assembly-bulk-button mono"
-                  onClick={() => onRotate(axis, 90)}
-                  disabled={busy || !canRotate}
-                  aria-label={`Rotate selection ${label} plus 90 degrees`}
-                  title={`Rotate +90° about ${label}`}
-                >
-                  +90
-                </button>
-              </span>
-            ))}
           </div>
         </div>
       ) : null}

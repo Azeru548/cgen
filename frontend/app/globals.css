@@ -1898,9 +1898,30 @@ button { font: inherit; color: inherit; }
 
 .assembly-list li {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: auto 1fr auto auto;
   gap: 0.2rem;
   align-items: center;
+}
+
+.assembly-tick {
+  width: 1.15rem;
+  height: 1.15rem;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  border-radius: 2px;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.assembly-tick:hover:not(:disabled) {
+  border-color: var(--ink-secondary);
+}
+
+.assembly-tick.is-on {
+  background: var(--signal);
+  border-color: var(--signal);
+  box-shadow: inset 0 0 0 2px var(--surface);
 }
 
 .assembly-item {
