@@ -28,17 +28,6 @@ const MONTHS = [
   "DEC",
 ];
 
-function serialFor(ws: Workspace, index: number): string {
-  const n = (Math.abs(hash(ws.id)) % 900) + 100 + index;
-  return `WS-${String(n).padStart(3, "0")}`;
-}
-
-function hash(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return h;
-}
-
 /** Day/month stamp straight from the ISO string. Going through `Date` would
  * make the server and the browser disagree across time zones on the same
  * revision.
@@ -164,7 +153,6 @@ export function WorkspaceHome({
         <ul className="tray-grid" aria-label="Workspaces">
           {workspaces.map((ws, index) => {
             const active = ws.id === project.activeWorkspaceId;
-            const count = ws.revisions.length;
             const stamped = lastStamp(ws);
             const armed = confirming === ws.id;
             return (

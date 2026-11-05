@@ -29,7 +29,7 @@ Single-page web workstation: one top bar (logo, model library, Workspace, Clear 
 ## Capabilities and Constraints
 
 - Generate and modify single parts (schema v3.2) or assemblies (schema v4.0) from natural language
-- Deterministic component library (~25 types: geometry, fasteners, mechanical, electronics, enclosure template)
+- Deterministic component library (~40 types: geometry, fasteners, mechanical, electronics, robotics, templates)
 - Add / remove / update / hide objects without calling the LLM
 - Multi-object scene: selection, per-object parameters, placement, visibility
 - Local parametric rebuild for single parts; assembly update/rebuild for library components
@@ -59,4 +59,4 @@ Working full-stack app in repo (frontend + backend + tests). No external marketi
 
 ## Accessibility & Inclusion
 
-Keyboard-operable controls, visible focus, `prefers-reduced-motion` respected for nonessential motion, aria labels on viewport/toolbars, readable contrast on dark surfaces (to be re-verified after redesign).
+Keyboard-operable controls, visible focus, `prefers-reduced-motion` respected for nonessential motion, aria labels on viewport/toolbars, readable contrast on the dark bench (ink 15.5:1 on ground, meta 6.5:1, white on signal 5.3:1).

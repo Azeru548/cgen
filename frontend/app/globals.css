@@ -211,33 +211,6 @@ button { font: inherit; color: inherit; }
   pointer-events: none;
 }
 
-.home-project {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  min-width: 0;
-  text-align: right;
-}
-
-.home-project-name {
-  max-width: 16rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--ink);
-}
-
-.home-project-note {
-  font-size: 0.55rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
 .home-new {
   display: inline-flex;
   align-items: center;
@@ -453,31 +426,6 @@ button { font: inherit; color: inherit; }
   outline-offset: -3px;
 }
 
-.tray-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.6rem;
-}
-
-.tray-serial {
-  font-size: 0.62rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  color: var(--ink-faint);
-  font-variant-numeric: tabular-nums;
-}
-
-.tray-flag {
-  padding: 0.08rem 0.4rem;
-  border: 1px solid var(--signal);
-  border-radius: 2px;
-  font-size: 0.5rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--signal);
-}
-
 .tray-title {
   font-size: 1.35rem;
   font-weight: 700;
@@ -654,9 +602,6 @@ button { font: inherit; color: inherit; }
 }
 
 @media (max-width: 720px) {
-  .home-project {
-    display: none;
-  }
   .home-new {
     padding: 0 0.7rem;
     font-size: 0.68rem;

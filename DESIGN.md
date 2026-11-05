@@ -4,8 +4,8 @@
 
 ## Direction contract
 
-- **Thesis:** cgen is a machinist's metrology kit — engraved scales, DRO wells, one signal-needle accent; refuses warm-ivory craft-kit chrome and generic dark SaaS CAD.
-- **Own-world:** cool instrument-gray ground (#e8eaed), white chrome surfaces, engraved ink (#16181d), hairline etched rules, near-square radii (2–6px), one signal red (#cc2936) for primary action and live state only; Barlow Semi Condensed UI + JetBrains Mono DRO numerals; tick rails, graduation edges, dark measuring well (#0e1014) as the only atmosphere.
+- **Thesis:** cgen is a machinist's metrology kit — engraved scales, DRO wells, one signal-needle accent; refuses warm-ivory craft-kit chrome and blue-glow generic dark SaaS CAD.
+- **Own-world (night shift):** bench-black ground (#0f1319) around a deepest-dark measuring well (#07090d), graphite chrome surfaces (#161c25 / #111722), etched light ink (#e8eaed), hairline rules (#2b3442 / #414c5e), near-square radii (2–6px), one signal red (#cc2936) for primary action and live state only; Barlow Semi Condensed UI + JetBrains Mono DRO numerals; tick rails, graduation edges. Dark-only: `color-scheme: dark`, no light theme.
 - **Story:** maker lands on engraved nameplates, opens a bench, describes a part, adds registry components, watches DRO readouts while dragging, caged→zeroed values on Apply, downloads packed files.
 - **First viewport:** Home — chrome bar with tick rail; workspace nameplates in a calibration-bench grid, each with engraved serial (WS-###) and rev stamp; New workspace as instrument key. Workspace — chrome top bar + tick rail; library rail left; dark measuring well with reticle center; graduated inspector right; prompt thimble + red Generate bottom. Signature: dirty values raise a red cage tick; Apply settles with a scale-tick pulse; drag ticks XYZ like encoder counts.
 - **Form:** assigned direction “Precision Bench”, seed `14f0f6df` (direction round, code-led wireframe lock).
@@ -15,19 +15,23 @@
 
 | Token | Hex / value | Role |
 |---|---|---|
-| `--bg` | `#e8eaed` | Page canvas (instrument gray) |
-| `--surface` | `#f7f8fa` | Cards, bars, inputs |
-| `--panel` | `#eef0f3` | Inspector / library rail |
-| `--ink` | `#16181d` | Primary text (engraved) |
-| `--ink-secondary` | `#4a5058` | Secondary text |
-| `--ink-faint` | `#555d6b` | Tertiary / meta (≥4.5:1 on ground) |
-| `--border` | `#c9ced6` | Default hairline rules |
-| `--border-strong` | `#a8b0bb` | Emphasised rules / tick marks |
+| `--bg` | `#0f1319` | Page canvas (bench black) |
+| `--bg-deep` | `#090c11` | Shell edges, deepest page ground |
+| `--surface` | `#161c25` | Cards, bars, inputs |
+| `--panel` | `#111722` | Inspector / library rail |
+| `--input` | `#1c2330` | Field wells (`--input-hover` `#232c3b`) |
+| `--surface-dark` | `#07090d` | Measuring well (deepest dark) |
+| `--ink` | `#e8eaed` | Primary text (etched light) |
+| `--ink-secondary` | `#a9b2be` | Secondary text |
+| `--ink-faint` | `#8f99a6` | Tertiary / meta (≥4.5:1 on ground) |
+| `--border` | `#2b3442` | Default hairline rules |
+| `--border-strong` | `#414c5e` | Emphasised rules / tick marks |
 | `--signal` | `#cc2936` | Sole accent: primary action + live/dirty state |
-| `--danger` | `#a01820` | Errors |
-| Viewport canvas | `#0e1014` | Dark measuring well (sole atmosphere) |
+| `--signal-soft` | `#2b1418` | Signal fill behind active / dirty rows |
+| `--danger` | `#e0606a` | Errors |
+| Viewport canvas | `#0e1014` | three.js scene background |
 
-Strategy: **Single-accent restraint** — legacy coral/cobalt/mint/amber tokens alias to signal/ink so decoration never reintroduces a second hue. Signal is reserved for Generate, dirty/Apply cage ticks, focus, and active selection borders.
+Strategy: **Single-accent restraint** — legacy coral/cobalt/mint/amber tokens alias to signal/ink on dark, so decoration never reintroduces a second hue. Signal is reserved for Generate, dirty/Apply cage ticks, focus, and active selection borders.
 
 ## Typography
 
@@ -41,7 +45,7 @@ Scale (approx): home title `clamp(1.7rem, 3.5vw, 2.4rem)` · body `0.95–1.02re
 ## Spacing & shape
 
 - Scale: `--space-1` … `--space-6` (0.35 → 2.5rem).
-- Radius: `2–6px` controls and panels (near-square); pill radius only for legacy aliases.
+- Radius: `3–6px` controls and panels (near-square); `--radius-pill` is `2px` so no pill shapes survive.
 - Depth: soft inset+drop shadows (`--shadow-sm/md/lg`), never hard offset blocks.
 - Ornament: tick rails (`--tick` / `--tick-v`), graduated inspector edge, reticle crosshair in the well.
 
@@ -65,7 +69,7 @@ Nameplates, revision items (active = signal border, no side-stripe), model libra
 
 ## Assembly interaction (M9)
 
-- **Model library** lives in the **left rail**. Categories (Geometry / Fasteners / Mechanical / Electronics / Templates) open as compact overlays to the right of the rail — only one open, shell height fixed. **Add** inserts a registry component with no LLM call.
+- **Model library** lives in the **left rail**. Categories (Geometry / Fasteners / Mechanical / Electronics / Robotics / Templates) open as compact overlays to the right of the rail — only one open, shell height fixed. **Add** inserts a registry component with no LLM call.
 - **Inspector** is the sole vertical scroll region in the workspace; header sticks while content scrolls.
 - **Assembly tree** lists named objects; selection is shared with the viewport (signal border). Eye toggle is a preview; **Apply placement** commits visibility, name, and transform as one revision.
 - **Object inspector** shows name, XYZ mm / Euler degrees, and registry parameters. Dirty values raise a red cage tick; **Apply** settles the tick. Neither writes a revision until the explicit button.
@@ -75,7 +79,7 @@ Nameplates, revision items (active = signal border, no side-stripe), model libra
 ## Accessibility
 
 - Focus: 2px signal outline, 2px offset; `caret-color: signal`.
-- Contrast: ink on ground ≥4.5:1; white on signal for primary button; status colors paired with text labels.
+- Contrast (measured): ink/bg 15.5:1, ink/surface 14.2:1, ink-secondary/bg 8.7:1, ink-faint/bg 6.5:1, danger/bg 5.4:1, white on signal 5.3:1; status colors paired with text labels.
 - Browser surfaces: `::selection`, caret, scrollbars themed from the palette.
 - Reduced motion: all transitions/animations disabled under `prefers-reduced-motion`.
 
@@ -87,4 +91,4 @@ Nameplates, revision items (active = signal border, no side-stripe), model libra
 
 ## Verified
 
-- `tsc --noEmit` clean · vitest **91** · eslint 0 errors · workspace is a fixed app shell (no page scroll; inspector-only scroll).
+- `tsc --noEmit` clean · vitest **114** (11 files) · eslint 0 errors · workspace is a fixed app shell (no page scroll; inspector-only scroll).
