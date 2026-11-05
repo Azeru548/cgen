@@ -220,6 +220,29 @@ def _hex_prism(across_flats: float, height: float):
     return make_polygon_prism(6, circum, height)
 
 
+def _cone(bottom_radius: float, top_radius: float, height: float):
+    """Z-axis frustum, centered (matches make_cylinder's convention)."""
+    from .cadquery_engine import make_cone
+
+    return make_cone(bottom_radius, top_radius, height)
+
+
+def _rotate_x(solid, degrees: float):
+    cq = _require_cq()
+    return solid.rotate(cq.Vector(0, 0, 0), cq.Vector(1, 0, 0), degrees)
+
+
+def _chamfered_rod(radius: float, length: float, chamfer: float):
+    """Centered Z rod with 45° end chamfers (clamped to what the rod allows)."""
+    c = max(0.0, min(chamfer, radius * 0.45, length * 0.45))
+    if c < 0.05:
+        return _cyl(radius, length)
+    core = _cyl(radius, length - 2 * c)
+    top = _translate(_cone(radius, radius - c, c), 0, 0, length / 2 - c / 2)
+    bottom = _translate(_cone(radius - c, radius, c), 0, 0, -length / 2 + c / 2)
+    return _union(_union(core, top), bottom)
+
+
 # --- Primitive builders (map onto existing operations, then CadQuery) ------
 
 
@@ -279,23 +302,48 @@ def build_prism(params: dict[str, ParamValue]):
 
 
 # --- Fasteners (local origin at the tip, axis +Z) --------------------------
+#
+# Metric fasteners follow the published envelope: socket-head cap screws get a
+# cylindrical head with a hex recess (a hex prism head is a bolt, not a cap
+# screw), and hex nuts get the 30° face chamfer that makes them look machined.
 
 
 def _metric_screw(diameter: float, head_af: float, head_h: float):
+    """Socket-head cap screw: chamfered shank + cylindrical head + hex recess."""
+
     def builder(params: dict[str, ParamValue]):
         length = _f(params, "length")
-        shaft = _cyl(diameter / 2, length)
-        shaft = _translate(shaft, 0, 0, length / 2)
-        head = _hex_prism(head_af, head_h)
+        shank = _chamfered_rod(diameter / 2, length, min(0.4, length * 0.1))
+        shank = _translate(shank, 0, 0, length / 2)
+        head = _cyl(head_af / 2, head_h)
         head = _translate(head, 0, 0, length + head_h / 2)
-        return _union(shaft, head)
+        solid = _union(shank, head)
+        # Hex socket, cut 70% of the way into the head (real cap screws are
+        # roughly half, but the recess reads better on a small preview).
+        socket = _hex_prism(head_af * 0.45, head_h * 1.2)
+        socket = _translate(socket, 0, 0, length + head_h * 0.9)
+        return _cut(solid, socket)
 
     return builder
 
 
 def _metric_nut(hole: float, af: float, height: float):
+    """Hex nut with the standard 30° chamfer on both faces."""
+
     def builder(params: dict[str, ParamValue]):
-        body = _hex_prism(af, height)
+        circum = af / math.sqrt(3)
+        chamfer = max(
+            0.1,
+            min(height * 0.2, (circum - af / 2) * math.sqrt(3)),
+        )
+        core = _hex_prism(af, max(height - 2 * chamfer, 0.2))
+        top = _translate(
+            _cone(circum, af / 2, chamfer), 0, 0, height / 2 - chamfer / 2
+        )
+        bottom = _translate(
+            _cone(af / 2, circum, chamfer), 0, 0, -height / 2 + chamfer / 2
+        )
+        body = _union(_union(core, top), bottom)
         cutter = _cyl(hole / 2, height + 4)
         return _cut(body, cutter)
 
@@ -327,18 +375,66 @@ def build_standoff(params: dict[str, ParamValue]):
 # --- Mechanical ------------------------------------------------------------
 
 
+def build_heat_insert(params: dict[str, ParamValue]):
+    """Heat-set threaded insert for printed plastic: tapered body + top flange."""
+    length = _f(params, "length")
+    outer = _f(params, "outer_diameter")
+    hole = _f(params, "hole_diameter")
+    if hole >= outer * 0.85:
+        raise ValueError("heat insert hole_diameter must be clearly smaller than outer_diameter")
+    flange_h = min(0.6, length * 0.15)
+    body = _cone(outer / 2 * 0.9, outer / 2, length - flange_h)
+    body = _translate(body, 0, 0, -flange_h / 2)
+    flange = _cyl(outer / 2 * 1.18, flange_h)
+    flange = _translate(flange, 0, 0, length / 2 - flange_h / 2)
+    solid = _union(body, flange)
+    cutter = _cyl(hole / 2, length + 4)
+    return _cut(solid, cutter)
+
+
+def build_hex_standoff(params: dict[str, ParamValue]):
+    """Hex standoff with a through hole (threads not modelled)."""
+    length = _f(params, "length")
+    af = _f(params, "across_flats")
+    hole = _f(params, "hole_diameter")
+    if hole >= af * 0.85:
+        raise ValueError("standoff hole_diameter must be smaller than across_flats")
+    body = _hex_prism(af, length)
+    cutter = _cyl(hole / 2, length + 4)
+    return _cut(body, cutter)
+
+
 def build_bracket(params: dict[str, ParamValue]):
+    """L-bracket with two mounting holes in each leg."""
     width = _f(params, "width")
     depth = _f(params, "depth")
     height = _f(params, "height")
     thickness = _f(params, "thickness")
+    hole = _f(params, "hole_diameter")
     if thickness >= min(width, depth, height):
         raise ValueError("bracket thickness must be smaller than width, depth and height")
+    if hole * 2.5 >= min(width, height):
+        raise ValueError(
+            "bracket hole_diameter is too large for this width and height"
+        )
     base = _box(width, depth, thickness)
     base = _translate(base, 0, 0, thickness / 2)
     wall = _box(width, thickness, height)
     wall = _translate(wall, 0, -depth / 2 + thickness / 2, height / 2)
-    return _union(base, wall)
+    solid = _union(base, wall)
+
+    hole_x = (-width / 4, width / 4)
+    for x in hole_x:
+        # Base: vertical through hole.
+        cutter = _cyl(hole / 2, thickness + 4)
+        cutter = _translate(cutter, x, 0, thickness / 2)
+        solid = _cut(solid, cutter)
+        # Wall: horizontal through hole (along Y).
+        cutter = _cyl(hole / 2, depth + 4)
+        cutter = _rotate_x(cutter, 90.0)
+        cutter = _translate(cutter, x, -depth / 2 + thickness / 2, height / 2)
+        solid = _cut(solid, cutter)
+    return solid
 
 
 def build_spacer(params: dict[str, ParamValue]):
@@ -356,11 +452,11 @@ def build_spacer(params: dict[str, ParamValue]):
 
 
 def build_shaft(params: dict[str, ParamValue]):
-    return _build_from_operation(
-        CylinderOperation(
-            radius=_f(params, "diameter") / 2,
-            height=_f(params, "length"),
-        )
+    """Plain shaft with 45° end chamfers (the lead-in real shafts have)."""
+    return _chamfered_rod(
+        _f(params, "diameter") / 2,
+        _f(params, "length"),
+        _f(params, "chamfer"),
     )
 
 
@@ -379,17 +475,41 @@ def build_bearing(params: dict[str, ParamValue]):
 
 
 def build_hinge(params: dict[str, ParamValue]):
+    """Butt hinge: segmented barrel with pin, two leaves and screw holes."""
     length = _f(params, "length")
     knuckle = _f(params, "knuckle_diameter")
     leaf = _f(params, "leaf_width")
     thickness = _f(params, "thickness")
+    hole = _f(params, "hole_diameter")
+    if hole >= min(leaf, length / 2) * 0.9:
+        raise ValueError("hinge hole_diameter is too large for the leaf")
+
     pin = _cyl(knuckle / 2 * 0.55, length + 2)
     barrel = _cyl(knuckle / 2, length)
+    # Two shallow ring grooves divide the barrel into knuckles without
+    # splitting the solid (a real hinge's knuckles are separate parts, which a
+    # single watertight export cannot represent).
+    groove_w = max(0.6, length * 0.035)
+    for z in (-length / 6, length / 6):
+        ring = _cut(_cyl(knuckle / 2 + 1, groove_w), _cyl(knuckle / 2 - 0.6, groove_w))
+        barrel = _cut(barrel, _translate(ring, 0, 0, z))
+
+    # Leaves overlap the barrel by 0.5 mm so the fuse is a real union rather
+    # than a tangent contact.
+    overlap = 0.5
     left = _box(leaf, length, thickness)
-    left = _translate(left, -leaf / 2 - knuckle / 2, 0, 0)
+    left = _translate(left, -leaf / 2 - knuckle / 2 + overlap, 0, 0)
     right = _box(leaf, length, thickness)
-    right = _translate(right, leaf / 2 + knuckle / 2, 0, 0)
-    return _union(_union(_union(barrel, pin), left), right)
+    right = _translate(right, leaf / 2 + knuckle / 2 - overlap, 0, 0)
+    solid = _union(_union(_union(barrel, pin), left), right)
+
+    for side in (-1.0, 1.0):
+        x = side * (knuckle / 2 + leaf / 2)
+        for y in (-length / 4, length / 4):
+            cutter = _cyl(hole / 2, thickness + 4)
+            cutter = _translate(cutter, x, y, 0)
+            solid = _cut(solid, cutter)
+    return solid
 
 
 # --- Electronics -----------------------------------------------------------
@@ -779,14 +899,25 @@ def _defs() -> tuple[ComponentDef, ...]:
             builder=_metric_screw(4.0, 7.0, 4.0),
         ),
         ComponentDef(
+            "m5_screw", "fasteners", "M5 Screw",
+            "M5 socket-head cap screw. Length is the shank; no real thread.",
+            (ParamSpec("length", "Length", "length", 20.0, 8.0, 120.0),),
+            builder=_metric_screw(5.0, 8.5, 5.0),
+        ),
+        ComponentDef(
             "m3_nut", "fasteners", "M3 Nut",
-            "M3 hex nut. Across-flats 5.5 mm.",
+            "M3 hex nut with chamfered faces. Across-flats 5.5 mm.",
             (), parameterized=False, builder=_metric_nut(3.0, 5.5, 2.4),
         ),
         ComponentDef(
             "m4_nut", "fasteners", "M4 Nut",
-            "M4 hex nut. Across-flats 7 mm.",
+            "M4 hex nut with chamfered faces. Across-flats 7 mm.",
             (), parameterized=False, builder=_metric_nut(4.0, 7.0, 3.2),
+        ),
+        ComponentDef(
+            "m5_nut", "fasteners", "M5 Nut",
+            "M5 hex nut with chamfered faces. Across-flats 8 mm.",
+            (), parameterized=False, builder=_metric_nut(5.0, 8.0, 4.0),
         ),
         ComponentDef(
             "washer", "fasteners", "Washer",
@@ -809,13 +940,36 @@ def _defs() -> tuple[ComponentDef, ...]:
             builder=build_standoff,
         ),
         ComponentDef(
+            "hex_standoff", "fasteners", "Hex standoff",
+            "Hex standoff with a through hole. Defaults match M3.",
+            (
+                ParamSpec("length", "Length", "length", 10.0, 2.0, 80.0),
+                ParamSpec("across_flats", "Across flats", "length", 5.5, 2.0, 40.0),
+                ParamSpec("hole_diameter", "Hole Ø", "length", 3.2, 0.5, 20.0),
+            ),
+            builder=build_hex_standoff,
+        ),
+        ComponentDef(
+            "heat_insert", "fasteners", "Heat-set insert",
+            "Heat-set threaded insert for printed plastic: tapered body and flange. "
+            "Threads are not modelled.",
+            (
+                ParamSpec("length", "Length", "length", 5.7, 2.0, 30.0),
+                ParamSpec("outer_diameter", "Outer Ø", "length", 4.6, 2.0, 20.0),
+                ParamSpec("hole_diameter", "Hole Ø", "length", 3.0, 1.0, 12.0),
+            ),
+            builder=build_heat_insert,
+        ),
+        ComponentDef(
             "bracket", "mechanical", "L-bracket",
-            "L-bracket from two plates. Origin at the inner corner on the base.",
+            "L-bracket from two plates with two mounting holes per leg. "
+            "Origin at the inner corner on the base.",
             (
                 ParamSpec("width", "Width", "length", 40.0, 5.0, 400.0),
                 ParamSpec("depth", "Depth", "length", 30.0, 5.0, 400.0),
                 ParamSpec("height", "Height", "length", 30.0, 5.0, 400.0),
                 ParamSpec("thickness", "Thickness", "length", 3.0, 0.5, 20.0),
+                ParamSpec("hole_diameter", "Hole Ø", "length", 3.4, 1.0, 12.0),
             ),
             builder=build_bracket,
         ),
@@ -831,10 +985,11 @@ def _defs() -> tuple[ComponentDef, ...]:
         ),
         ComponentDef(
             "shaft", "mechanical", "Shaft",
-            "Plain cylindrical shaft, axis +Z.",
+            "Plain cylindrical shaft with chamfered ends, axis +Z.",
             (
                 ParamSpec("diameter", "Diameter", "length", 8.0, 0.5, 200.0),
                 ParamSpec("length", "Length", "length", 60.0, 1.0, 1000.0),
+                ParamSpec("chamfer", "End chamfer", "length", 0.5, 0.0, 10.0),
             ),
             builder=build_shaft,
         ),
@@ -850,12 +1005,14 @@ def _defs() -> tuple[ComponentDef, ...]:
         ),
         ComponentDef(
             "hinge", "mechanical", "Hinge",
-            "Simplified butt hinge: barrel, pin, two leaves. No real knuckle joint.",
+            "Butt hinge: knuckled barrel with pin, two leaves and screw holes. "
+            "Knuckles are grooves, not separate parts.",
             (
                 ParamSpec("length", "Length", "length", 40.0, 10.0, 200.0),
                 ParamSpec("knuckle_diameter", "Knuckle Ø", "length", 6.0, 2.0, 30.0),
                 ParamSpec("leaf_width", "Leaf width", "length", 16.0, 4.0, 80.0),
                 ParamSpec("thickness", "Thickness", "length", 2.0, 0.5, 8.0),
+                ParamSpec("hole_diameter", "Hole Ø", "length", 3.4, 1.0, 10.0),
             ),
             builder=build_hinge,
         ),
@@ -1208,6 +1365,12 @@ def mounting_points_local(
         depth = _f(parameters, "depth")
         thickness = _f(parameters, "thickness")
         return [(x, y, thickness / 2) for x, y in _chassis_holes(width, depth)]
+    if type_key == "bracket":
+        # Base-leg holes only: mounted_on places one instance per point with an
+        # identity rotation, so a mixed-plane list would seat wall screws wrong.
+        width = _f(parameters, "width")
+        thickness = _f(parameters, "thickness")
+        return [(x, 0.0, thickness) for x in (-width / 4, width / 4)]
     return []
 
 

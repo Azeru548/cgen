@@ -145,6 +145,39 @@ def test_m3_screw_union_produces_geometry():
     assert_valid_solid(solid, min_volume=10)
 
 
+def test_socket_head_screw_has_a_hex_recess():
+    """A cap screw's head is cylindrical with a socket, not a hex prism.
+
+    Old model: 5.5 mm hex-prism head (78.7 mm³) on an un-chamfered shank
+    (84.8 mm³) = 163.5 mm³. New model: 5.5 mm cylindrical head with a hex
+    socket, on a chamfered shank — measurably less material, and the socket
+    is what makes the head read as a cap screw.
+    """
+    need_cq()
+    params = registry.validate_parameters("m3_screw", {"length": 12})
+    solid = registry.build_component("m3_screw", params)
+    vol = assert_valid_solid(solid, min_volume=10)
+    assert vol < 160.0
+
+
+@pytest.mark.parametrize(
+    "type_key",
+    ("m3_nut", "m4_nut", "m5_nut", "heat_insert", "hex_standoff", "bracket", "shaft", "hinge"),
+)
+def test_refined_and_new_components_build_valid_solids(type_key):
+    need_cq()
+    params = registry.validate_parameters(type_key, {})
+    solid = registry.build_component(type_key, params)
+    assert_valid_solid(solid)
+
+
+def test_bracket_rejects_holes_that_do_not_fit():
+    need_cq()
+    params = registry.validate_parameters("bracket", {"hole_diameter": 12.0})
+    with pytest.raises(ValueError, match="too large"):
+        registry.build_component("bracket", params)
+
+
 def test_arduino_enclosure_benchmark_assembly_exports():
     """Canonical M9 prompt geometry: enclosure + Arduino + four M3 screws."""
     need_cq()

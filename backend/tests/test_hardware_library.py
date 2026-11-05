@@ -59,6 +59,28 @@ def test_m10_components_are_registered():
         assert required in types, f"missing component type: {required}"
 
 
+def test_refined_library_additions_are_registered():
+    types = set(registry.all_types())
+    for required in ("m5_screw", "m5_nut", "heat_insert", "hex_standoff"):
+        assert required in types, f"missing component type: {required}"
+
+
+def test_bracket_has_mounting_holes():
+    params = registry.validate_parameters("bracket", {})
+    assert params["hole_diameter"] == 3.4
+    points = registry.mounting_points_local("bracket", params)
+    assert len(points) == 2
+
+
+def test_shaft_and_hinge_gained_their_refinement_parameters():
+    shaft = registry.validate_parameters("shaft", {})
+    assert shaft["chamfer"] == 0.5
+    with pytest.raises(ValueError, match="must be <="):
+        registry.validate_parameters("shaft", {"chamfer": 11.0})
+    hinge = registry.validate_parameters("hinge", {})
+    assert hinge["hole_diameter"] == 3.4
+
+
 def test_ids_are_unique_and_metadata_complete():
     types = registry.all_types()
     assert len(types) == len(set(types))
