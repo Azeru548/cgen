@@ -178,6 +178,123 @@ def test_bracket_rejects_holes_that_do_not_fit():
         registry.build_component("bracket", params)
 
 
+EXPANDED_TYPES = (
+    "m6_screw",
+    "m6_nut",
+    "set_screw",
+    "threaded_rod",
+    "t_nut",
+    "nyloc_nut",
+    "spur_gear",
+    "gt2_pulley",
+    "v_slot_extrusion",
+    "shaft_coupling",
+    "shaft_collar",
+    "flange",
+    "compression_spring",
+    "dowel_pin",
+    "servo_horn",
+    "linear_rail",
+    "wheel_hub",
+    "ball_caster",
+    "idler_pulley",
+    "fan",
+    "battery_holder",
+    "pin_header",
+    "dc_barrel_jack",
+    "raspberry_pi_pico",
+    "arduino_nano",
+    "knob",
+    "cable_clip",
+    "zip_tie_mount",
+    "gusset",
+    "vent_panel",
+    "snap_fit_clip",
+    "pcb_mount_post",
+)
+
+
+@pytest.mark.parametrize("type_key", EXPANDED_TYPES)
+def test_expanded_library_builds_valid_solids(type_key):
+    need_cq()
+    params = registry.validate_parameters(type_key, {})
+    solid = registry.build_component(type_key, params)
+    assert_valid_solid(solid)
+
+
+def test_spur_gear_actually_cuts_involute_teeth():
+    """A 20-tooth m1 gear must come out tooth-shaped, not a smooth disc."""
+    need_cq()
+    params = registry.validate_parameters("spur_gear", {})
+    solid = registry.build_component("spur_gear", params)
+    bbox = solid.BoundingBox()
+    # Outside diameter = module * (teeth + 2) = 1 * 22.
+    assert bbox.xlen == pytest.approx(22.0, abs=0.1)
+    assert bbox.ylen == pytest.approx(22.0, abs=0.1)
+    # Each tooth contributes flank and tip faces; a plain ring would not.
+    assert len(solid.Faces()) > 20 * 8
+    assert solid.Volume() < math.pi * 11.0**2 * 5.0 - math.pi * 2.5**2 * 5.0
+
+
+def test_gt2_pulley_grooves_reduce_the_rim():
+    need_cq()
+    params = registry.validate_parameters("gt2_pulley", {})
+    solid = registry.build_component("gt2_pulley", params)
+    # 20T at 2 mm pitch: pitch diameter 12.73, rim 12.48, flanges 14.08.
+    assert solid.BoundingBox().xlen == pytest.approx(14.08, abs=0.05)
+    # 20 separate grooves interrupt the rim: a smooth pulley would have ~10
+    # faces total, a grooved one keeps a face per flank and crown.
+    assert len(solid.Faces()) > 70
+    # Nothing may overlap the bore.
+    assert solid.Volume() < math.pi * (14.08 / 2) ** 2 * 11.2
+
+
+def test_v_slot_extrusion_keeps_its_corner_webs():
+    """Square channel corners would sever the four corner lobes."""
+    need_cq()
+    params = registry.validate_parameters("v_slot_extrusion", {"length": 200.0})
+    solid = registry.build_component("v_slot_extrusion", params)
+    assert len(solid.Solids()) == 1, "the T-slots cut the extrusion into loose pieces"
+    assert solid.Volume() < 20.0 * 20.0 * 200.0 * 0.55
+    assert solid.Volume() > 20.0 * 20.0 * 200.0 * 0.35
+
+
+def test_compression_spring_is_a_real_sweep():
+    need_cq()
+    params = registry.validate_parameters("compression_spring", {})
+    solid = registry.build_component("compression_spring", params)
+    wire_area = math.pi * (params["wire_diameter"] / 2) ** 2
+    height = params["free_length"] - params["wire_diameter"]
+    turns = params["coils"]
+    pitch = height / turns
+    helix_length = math.hypot(2 * math.pi * (params["coil_diameter"] - params["wire_diameter"]) / 2, pitch) * turns
+    assert solid.Volume() == pytest.approx(wire_area * helix_length, rel=0.06)
+
+
+def test_screw_head_choice_changes_the_head_shape():
+    need_cq()
+    countersunk = registry.build_component(
+        "m3_screw", registry.validate_parameters("m3_screw", {"head": "countersunk"})
+    )
+    socket = registry.build_component(
+        "m3_screw", registry.validate_parameters("m3_screw", {"head": "socket"})
+    )
+    assert countersunk.BoundingBox().xlen > socket.BoundingBox().xlen
+    assert countersunk.BoundingBox().zlen < socket.BoundingBox().zlen
+    with pytest.raises(ValueError, match="head"):
+        registry.validate_parameters("m3_screw", {"head": "phillips"})
+
+
+def test_fan_and_pin_header_match_their_published_envelopes():
+    need_cq()
+    fan = registry.build_component("fan", registry.validate_parameters("fan", {}))
+    assert fan.BoundingBox().xlen == pytest.approx(40.0, abs=0.01)
+    header = registry.build_component(
+        "pin_header", registry.validate_parameters("pin_header", {})
+    )
+    assert header.BoundingBox().xlen == pytest.approx(8 * 2.54, abs=0.01)
+
+
 def test_arduino_enclosure_benchmark_assembly_exports():
     """Canonical M9 prompt geometry: enclosure + Arduino + four M3 screws."""
     need_cq()

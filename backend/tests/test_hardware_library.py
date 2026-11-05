@@ -81,6 +81,78 @@ def test_shaft_and_hinge_gained_their_refinement_parameters():
     assert hinge["hole_diameter"] == 3.4
 
 
+EXPANDED_TYPES = (
+    "m6_screw",
+    "m6_nut",
+    "set_screw",
+    "threaded_rod",
+    "t_nut",
+    "nyloc_nut",
+    "spur_gear",
+    "gt2_pulley",
+    "v_slot_extrusion",
+    "shaft_coupling",
+    "shaft_collar",
+    "flange",
+    "compression_spring",
+    "dowel_pin",
+    "servo_horn",
+    "linear_rail",
+    "wheel_hub",
+    "ball_caster",
+    "idler_pulley",
+    "fan",
+    "battery_holder",
+    "pin_header",
+    "dc_barrel_jack",
+    "raspberry_pi_pico",
+    "arduino_nano",
+    "knob",
+    "cable_clip",
+    "zip_tie_mount",
+    "gusset",
+    "vent_panel",
+    "snap_fit_clip",
+    "pcb_mount_post",
+)
+
+
+def test_expanded_types_are_registered_and_insertable():
+    types = set(registry.all_types())
+    for required in EXPANDED_TYPES:
+        assert required in types, f"missing component type: {required}"
+    insertable = {d.type for d in registry.insertable_catalog()}
+    for required in EXPANDED_TYPES:
+        assert required in insertable, f"{required} is not insertable"
+
+
+def test_screw_head_is_a_validated_choice():
+    params = registry.validate_parameters("m3_screw", {})
+    assert params["head"] == "socket"
+    for head in ("socket", "countersunk", "button", "hex"):
+        assert registry.validate_parameters("m3_screw", {"head": head})["head"] == head
+    with pytest.raises(ValueError, match="must be one of"):
+        registry.validate_parameters("m3_screw", {"head": "torx"})
+
+
+def test_washer_and_knob_choices_have_sane_defaults():
+    washer = registry.validate_parameters("washer", {})
+    assert washer["kind"] == "flat"
+    assert registry.validate_parameters("washer", {"kind": "split"})["kind"] == "split"
+    knob = registry.validate_parameters("knob", {})
+    assert knob["shaft_kind"] == "d"
+    header = registry.validate_parameters("pin_header", {})
+    assert header["gender"] == "male"
+
+
+def test_new_boards_are_listed_in_the_catalog():
+    catalog = {entry["type"]: entry for entry in registry.public_catalog()}
+    for board in ("raspberry_pi_pico", "arduino_nano"):
+        assert board in catalog
+        assert catalog[board]["category"] == "electronics"
+        assert catalog[board]["insertable"] is True
+
+
 def test_ids_are_unique_and_metadata_complete():
     types = registry.all_types()
     assert len(types) == len(set(types))
