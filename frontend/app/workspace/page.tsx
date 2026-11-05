@@ -40,10 +40,12 @@ import {
   appendRevision,
   clearViewer,
   getActiveWorkspace,
+  removeWorkspace,
   selectRevision,
   switchWorkspace,
   visibleRevision,
 } from "@/lib/revisions";
+import { deleteWorkspaceRecord } from "@/lib/projectStore";
 import { computeLiveScale } from "@/lib/parameters";
 import type {
   CatalogComponent,
@@ -161,7 +163,8 @@ export default function Home() {
   // M11: mirror the project into Firestore for signed-in users. Guests keep
   // the previous in-memory behaviour, so accounts never gate the CAD work.
   const firestoreDb = useFirestore();
-  useProjectSync(project, setProject, firestoreDb, clearDrafts);
+  const { uid } = useProjectSync(project, setProject, firestoreDb, clearDrafts);
+  const [homeNotice, setHomeNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -781,6 +784,7 @@ export default function Home() {
 
   const handleNewWorkspace = useCallback(() => {
     setProject((p) => addWorkspace(p, `Workspace ${p.workspaces.length + 1}`));
+    setHomeNotice(null);
     setPrompt("");
     setGenerateError(null);
     setPreviewError(null);
@@ -789,6 +793,30 @@ export default function Home() {
     setView("workspace");
   }, [clearDrafts]);
 
+  /**
+   * Remove a workspace from the bench. Signed-in users get the plate flagged in
+   * Firestore first: if that write fails the plate stays, so the list never
+   * disagrees with what a reload will show.
+   */
+  const handleDeleteWorkspace = useCallback(
+    (workspaceId: string) => {
+      if (firestoreDb === null || uid === null) {
+        setProject((p) => removeWorkspace(p, workspaceId));
+        setHomeNotice(null);
+        return;
+      }
+      void deleteWorkspaceRecord(firestoreDb, uid, project.id, workspaceId)
+        .then(() => {
+          setProject((p) => removeWorkspace(p, workspaceId));
+          setHomeNotice(null);
+        })
+        .catch(() => {
+          setHomeNotice("That workspace could not be removed. Nothing was changed.");
+        });
+    },
+    [firestoreDb, uid, project.id],
+  );
+
   const handleOpenWorkspace = useCallback(
     (workspaceId: string) => {
       // Compute outside the state updater: updaters must stay pure, and React
@@ -796,6 +824,7 @@ export default function Home() {
       const next = switchWorkspace(project, workspaceId);
       const target = getActiveWorkspace(next);
       setProject(next);
+      setHomeNotice(null);
       setGenerateError(null);
       setPreviewError(null);
       setStatus(visibleRevision(target) === null ? "idle" : "ready");
@@ -873,8 +902,10 @@ export default function Home() {
         <WorkspaceHome
           project={project}
           busy={busy}
+          notice={homeNotice}
           onOpen={handleOpenWorkspace}
           onCreate={handleNewWorkspace}
+          onDelete={handleDeleteWorkspace}
         />
       </>
     );
@@ -895,10 +926,10 @@ export default function Home() {
           aria-label="Back to workspace shelf"
         >
           <Image
-            src="/logo-removebg.png"
+            src="/logo-wordmark-light.png"
             alt="cgen"
-            width={48}
-            height={48}
+            width={423}
+            height={107}
             className="brand-logo"
             priority
           />

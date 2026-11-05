@@ -25,11 +25,11 @@ function SignInInner() {
       </Link>
       <div className="auth-card">
         <Image
-          src="/logo-removebg.png"
+          src="/logo-wordmark-light.png"
           alt="cgen"
-          width={44}
-          height={44}
-          className="brand-logo"
+          width={423}
+          height={107}
+          className="brand-logo auth-logo"
           priority
         />
         <h1 className="auth-title">Your bench</h1>

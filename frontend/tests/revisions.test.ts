@@ -5,7 +5,9 @@ import {
   clearViewer,
   createProject,
   getActiveWorkspace,
+  removeWorkspace,
   selectRevision,
+  switchWorkspace,
   visibleRevision,
 } from "../lib/revisions";
 import type { GenerateResponse } from "../types/api";
@@ -82,5 +84,52 @@ describe("adjust revisions", () => {
     project = addWorkspace(project, "Workspace 2");
     expect(getActiveWorkspace(project).revisions).toHaveLength(0);
     expect(project.workspaces[0].revisions).toHaveLength(1);
+  });
+});
+
+describe("removeWorkspace", () => {
+  it("drops the plate and its revisions", () => {
+    let project = createProject("Bracket");
+    project = appendRevision(project, "generate", "box", response("box", "r1"));
+    project = addWorkspace(project, "Workspace 2");
+    const kept = project.workspaces[0].id;
+    const removed = project.workspaces[1].id;
+
+    project = removeWorkspace(project, removed);
+    expect(project.workspaces.map((w) => w.id)).toEqual([kept]);
+    expect(project.activeWorkspaceId).toBe(kept);
+  });
+
+  it("moves the active pointer to a neighbouring plate", () => {
+    let project = createProject("Bracket");
+    project = addWorkspace(project, "Workspace 2");
+    project = addWorkspace(project, "Workspace 3");
+    const middle = project.workspaces[1].id;
+    project = switchWorkspace(project, middle);
+
+    project = removeWorkspace(project, middle);
+    expect(project.activeWorkspaceId).toBe(project.workspaces[1].id);
+    expect(project.workspaces).toHaveLength(2);
+  });
+
+  it("keeps the active plate when another one is removed", () => {
+    let project = createProject("Bracket");
+    project = addWorkspace(project, "Workspace 2");
+    const active = project.activeWorkspaceId;
+
+    project = removeWorkspace(project, project.workspaces[0].id);
+    expect(project.activeWorkspaceId).toBe(active);
+  });
+
+  it("refuses to remove the last workspace", () => {
+    const project = createProject("Bracket");
+    const after = removeWorkspace(project, project.workspaces[0].id);
+    expect(after.workspaces).toHaveLength(1);
+    expect(after).toBe(project);
+  });
+
+  it("ignores an unknown id", () => {
+    const project = createProject("Bracket");
+    expect(removeWorkspace(project, "missing")).toBe(project);
   });
 });

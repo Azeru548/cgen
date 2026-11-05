@@ -272,14 +272,13 @@ export default function LandingPage() {
         <div className="lp-bar-inner">
           <Link href="/" className="lp-brand" aria-label="cgen home">
             <Image
-              src="/logo-removebg.png"
+              src="/logo-wordmark-light.png"
               alt=""
-              width={38}
-              height={38}
+              width={423}
+              height={107}
               className="lp-brand-logo"
               priority
             />
-            <span className="lp-brand-name">cgen</span>
             <span className="lp-brand-tag mono">language → solid</span>
           </Link>
 
@@ -679,13 +678,12 @@ export default function LandingPage() {
           <div className="lp-foot-brand">
             <div className="lp-foot-mark">
               <Image
-                src="/logo-removebg.png"
-                alt=""
-                width={34}
-                height={34}
+                src="/logo-wordmark-light.png"
+                alt="cgen"
+                width={423}
+                height={107}
                 className="lp-brand-logo"
               />
-              <span className="lp-brand-name">cgen</span>
             </div>
             <p>Language to solid. Built on CadQuery, kept in revisions.</p>
           </div>

@@ -54,10 +54,10 @@ export default function OnboardingPage() {
     <div className="onboard">
       <header className="onboard-bar">
         <Image
-          src="/logo-removebg.png"
+          src="/logo-wordmark-light.png"
           alt="cgen"
-          width={36}
-          height={36}
+          width={423}
+          height={107}
           className="brand-logo"
           priority
         />

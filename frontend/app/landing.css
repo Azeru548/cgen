@@ -38,9 +38,11 @@
   text-decoration: none;
 }
 
+/* Transparent wordmark: the ink is already the brand, so no plate or text
+   duplicate sits beside it. */
 .lp-brand-logo {
-  width: 34px;
-  height: 34px;
+  width: auto;
+  height: 20px;
   object-fit: contain;
 }
 

@@ -101,10 +101,10 @@ export function BootScreen({ checks, onDone }: BootScreenProps) {
       data-testid="boot-screen"
     >
       <Image
-        src="/logo-removebg.png"
+        src="/logo-wordmark-light.png"
         alt="cgen"
-        width={80}
-        height={80}
+        width={423}
+        height={107}
         className="boot-logo"
         priority
       />

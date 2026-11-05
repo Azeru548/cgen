@@ -68,6 +68,25 @@ export function switchWorkspace(project: Project, workspaceId: string): Project 
 }
 
 /**
+ * Remove a workspace and its revisions from the project.
+ *
+ * A project always keeps at least one workspace, so removing the last one is a
+ * no-op: the editor has nowhere to land otherwise. When the removed workspace
+ * was the active one, the neighbour that takes its slot becomes active.
+ */
+export function removeWorkspace(project: Project, workspaceId: string): Project {
+  if (project.workspaces.length <= 1) return project;
+  const index = project.workspaces.findIndex((w) => w.id === workspaceId);
+  if (index === -1) return project;
+  const workspaces = project.workspaces.filter((w) => w.id !== workspaceId);
+  const activeWorkspaceId =
+    project.activeWorkspaceId === workspaceId
+      ? workspaces[Math.min(index, workspaces.length - 1)]!.id
+      : project.activeWorkspaceId;
+  return { ...project, workspaces, activeWorkspaceId };
+}
+
+/**
  * Append a successful generate/modify result as a new revision.
  * Parent = previously active revision (null for the first one).
  * Any clear-viewer flag is lifted: there is something to show again.

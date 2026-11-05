@@ -9,12 +9,18 @@ import type { Firestore } from "firebase/firestore";
 import {
   appendRevisions,
   createProjectRecord,
+  deleteWorkspaceRecord,
   loadProject,
   listProjects,
   saveProjectShell,
   serialFor,
 } from "../lib/projectStore";
-import { appendRevision, createProject, createWorkspace } from "../lib/revisions";
+import {
+  addWorkspace,
+  appendRevision,
+  createProject,
+  createWorkspace,
+} from "../lib/revisions";
 import type { GenerateResponse } from "@/types/api";
 import type { Project } from "@/types/revisions";
 
@@ -235,6 +241,38 @@ describe("loadProject", () => {
       `users/u1/projects/${base.id}/workspaces/${base.workspaces[0].id}`,
     );
     expect(await loadProject(db, "u1", base.id)).toBeNull();
+  });
+});
+
+describe("deleteWorkspaceRecord", () => {
+  it("flags the plate instead of deleting its history", async () => {
+    const project = createProject("Bench");
+    const workspaceId = project.workspaces[0].id;
+
+    await deleteWorkspaceRecord(db, "u1", project.id, workspaceId);
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0].op).toBe("update");
+    expect(writes[0].path).toBe(
+      `users/u1/projects/${project.id}/workspaces/${workspaceId}`,
+    );
+    expect(typeof writes[0].data.deletedAt).toBe("string");
+    expect(writes.some((w) => w.path.includes("/revisions/"))).toBe(false);
+  });
+
+  it("keeps a removed workspace out of the next load", async () => {
+    const project = addWorkspace(createProject("Bench"), "Workspace 2");
+    seedProject(project);
+    const removedId = project.activeWorkspaceId;
+    const removed = seed.get(
+      `users/u1/projects/${project.id}/workspaces/${removedId}`,
+    );
+    if (removed) removed.data.deletedAt = "2026-01-03T00:00:00.000Z";
+
+    const loaded = await loadProject(db, "u1", project.id);
+    expect(loaded?.workspaces).toHaveLength(1);
+    expect(loaded?.workspaces[0].id).toBe(project.workspaces[0].id);
+    expect(loaded?.activeWorkspaceId).toBe(project.workspaces[0].id);
   });
 });
 

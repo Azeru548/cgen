@@ -61,6 +61,13 @@ interface WorkspaceDoc {
   viewerCleared: boolean;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Set when the owner removes the workspace. The document stays behind
+   * because `firestore.rules` keeps revisions append-only — nothing under a
+   * workspace may be deleted — so removal hides the plate instead of
+   * destroying its history.
+   */
+  deletedAt?: string | null;
 }
 
 interface RevisionDoc {
@@ -154,6 +161,8 @@ export async function loadProject(
   const workspaces: Workspace[] = [];
   for (const workspaceSnap of workspaceSnaps.docs) {
     const meta = workspaceSnap.data() as WorkspaceDoc;
+    /* Removed workspaces stay stored but never come back in the UI. */
+    if (meta.deletedAt) continue;
     const revisionSnaps = await getDocs(
       query(revisionsCol(db, uid, projectId, workspaceSnap.id), orderBy("order", "asc")),
     );
@@ -253,6 +262,27 @@ export async function saveProjectShell(
     );
   });
   await batch.commit();
+}
+
+/**
+ * Mark a workspace as removed.
+ *
+ * The document is kept (flagged) rather than deleted: revisions are
+ * append-only, so the security rules forbid deleting them, and a workspace
+ * without its revisions would be a broken lineage. `loadProject` filters
+ * flagged workspaces out, so the next load agrees with the UI.
+ */
+export async function deleteWorkspaceRecord(
+  db: Firestore,
+  uid: string,
+  projectId: string,
+  workspaceId: string,
+): Promise<void> {
+  const now = nowIso();
+  await updateDoc(workspaceDocRef(db, uid, projectId, workspaceId), {
+    deletedAt: now,
+    updatedAt: now,
+  });
 }
 
 /**
