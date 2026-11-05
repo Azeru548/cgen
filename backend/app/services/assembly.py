@@ -428,7 +428,10 @@ def rebuild_assembly(
                 f"on '{old_c.id}'."
             )
         if old_c.generated is not None and new_c.generated is not None:
-            validate_rebuild(old_c.generated, new_c.generated)
+            # Identical nested parts are a no-op, not a rejection — grouping
+            # and locking only touch assembly metadata.
+            if old_c.generated.model_dump() != new_c.generated.model_dump():
+                validate_rebuild(old_c.generated, new_c.generated)
     if old_a.model_dump() == new_a.model_dump():
         raise ModificationRejectedError("No changes detected in the assembly.")
     return _export(

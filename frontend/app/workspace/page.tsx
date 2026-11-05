@@ -23,7 +23,6 @@ import {
   generatePart,
   humanizeApiError,
   modifyPart,
-  rebuildPart,
   remintFiles,
   removeAssemblyComponent,
   resolveFileUrl,
@@ -876,17 +875,18 @@ export default function Home() {
   const commitSpecPatch = useCallback(
     (label: string, next: ReturnType<typeof groupSelection>) => {
       if (next === null || visible === null) return;
-      void commitAssembly(label, () =>
-        rebuildPart(
-          visible.response.specification as unknown as Record<string, unknown>,
-          next as unknown as Record<string, unknown>,
-          abortRef.current?.signal,
-        ),
-      ).then((ok) => {
-        if (ok) clearDrafts();
-      });
+      // Groups and locks are scene handles, not a boolean merge and not a
+      // CAD rebuild. Keep the current files; only the specification changes.
+      setProject((p) =>
+        appendRevision(p, "assemble", label, {
+          ...visible.response,
+          specification: next,
+        }),
+      );
+      setGenerateError(null);
+      clearDrafts();
     },
-    [visible, commitAssembly, clearDrafts],
+    [visible, clearDrafts],
   );
 
   const handleGroup = useCallback(() => {

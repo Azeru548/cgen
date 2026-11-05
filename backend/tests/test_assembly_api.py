@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.ai import groq_client
 from app.cad.assembly import AssemblySpec, ComponentInstance
+from app.cad.schema import CADSpec
 from app.main import app
 
 client = TestClient(app)
@@ -242,6 +243,57 @@ def test_assembly_update_lock(monkeypatch):
     )
     assert r.status_code == 200, r.text
     assert r.json()["specification"]["components"][0]["locked"] is True
+
+
+def test_rebuild_allows_grouping_generated_parts(monkeypatch):
+    """Group/lock only change assembly metadata; nested parts stay identical."""
+    monkeypatch.setattr(
+        "app.services.assembly.export_assembly_document", _fake_export
+    )
+    box = {
+        "document_type": "3d_part",
+        "units": "mm",
+        "name": "block",
+        "operation": {"type": "box", "width": 40, "depth": 40, "height": 20},
+    }
+    spec = AssemblySpec(
+        name="two",
+        schema_version="4.1",
+        components=[
+            ComponentInstance(
+                id="generated_part_1",
+                component_type="generated_part",
+                name="Block",
+                generated=CADSpec.model_validate(box),
+            ),
+            ComponentInstance(
+                id="generated_part_2",
+                component_type="generated_part",
+                name="Block 2",
+                generated=CADSpec.model_validate({**box, "name": "block_2"}),
+            ),
+        ],
+    )
+    updated = spec.model_dump()
+    updated["groups"] = [
+        {
+            "id": "group_1",
+            "name": "Pair",
+            "component_ids": ["generated_part_1", "generated_part_2"],
+        }
+    ]
+    updated["components"][0]["locked"] = True
+    r = client.post(
+        "/rebuild",
+        json={
+            "base_specification": spec.model_dump(),
+            "specification": updated,
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()["specification"]
+    assert body["groups"][0]["id"] == "group_1"
+    assert body["components"][0]["locked"] is True
 
 
 def test_assembly_remove_prunes_groups(monkeypatch):
