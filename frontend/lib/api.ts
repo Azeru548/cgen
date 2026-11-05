@@ -240,8 +240,14 @@ async function readDetail(response: Response): Promise<string | null> {
 export async function generatePart(
   prompt: string,
   signal?: AbortSignal,
+  specification?: Record<string, unknown> | null,
 ): Promise<GenerateResponse> {
-  return postJson("/generate", { prompt }, signal, "Generation");
+  return postJson(
+    "/generate",
+    specification ? { prompt, specification } : { prompt },
+    signal,
+    "Generation",
+  );
 }
 
 export async function modifyPart(
@@ -386,6 +392,7 @@ export async function updateAssemblyComponent(
       position: [number, number, number];
       rotation: [number, number, number];
     }>;
+    locked?: boolean;
   },
   signal?: AbortSignal,
 ): Promise<GenerateResponse> {

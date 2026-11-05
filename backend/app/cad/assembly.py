@@ -19,11 +19,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from .schema import CADSpec, MAX_DIMENSION_MM, MAX_NAME_LENGTH
 
-ASSEMBLY_SCHEMA_VERSION = "4.0"
+ASSEMBLY_SCHEMA_VERSION = "4.1"
 
 MAX_COMPONENTS = 24
 MAX_INSTANCES = 12
 MAX_RELATIONSHIPS = 8
+MAX_GROUPS = 8
 MAX_COMPONENT_ID_LENGTH = 40
 
 COMPONENT_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
@@ -115,6 +116,7 @@ class ComponentInstance(BaseModel):
         default_factory=list, max_length=MAX_RELATIONSHIPS
     )
     generated: CADSpec | None = None
+    locked: bool = False
 
     @field_validator("id")
     @classmethod
@@ -161,16 +163,60 @@ class ComponentInstance(BaseModel):
         return self
 
 
+class AssemblyGroup(BaseModel):
+    """A named bundle of components that move together (schema 4.1).
+
+    A group is a handle, not a coordinate space: members keep their absolute
+    world transforms, so export and placement math are unchanged. Groups are
+    flat (no nesting) and a component belongs to at most one group.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=MAX_COMPONENT_ID_LENGTH)
+    name: str = Field(min_length=1, max_length=MAX_NAME_LENGTH)
+    component_ids: list[str] = Field(min_length=2, max_length=MAX_COMPONENTS)
+
+    @field_validator("id")
+    @classmethod
+    def id_shape(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not COMPONENT_ID_RE.match(cleaned):
+            raise ValueError(
+                "group id must be a lowercase slug "
+                "(letter, then letters/digits/underscores, max 40)"
+            )
+        return cleaned
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("group name must not be blank")
+        return cleaned
+
+    @field_validator("component_ids")
+    @classmethod
+    def members_unique(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value):
+            raise ValueError("a group cannot list the same component twice")
+        return value
+
+
 class AssemblySpec(BaseModel):
-    """Top-level validated assembly specification, schema 4.0."""
+    """Top-level validated assembly specification, schema 4.1."""
 
     model_config = ConfigDict(extra="forbid")
 
     document_type: Literal["3d_assembly"] = "3d_assembly"
     units: Literal["mm"] = "mm"
     name: str = Field(min_length=1, max_length=MAX_NAME_LENGTH)
-    schema_version: Literal["4.0"] = "4.0"
+    # 4.0 is still accepted so revisions saved before groups existed keep
+    # rebuilding; new documents are written as 4.1.
+    schema_version: Literal["4.0", "4.1"] = ASSEMBLY_SCHEMA_VERSION
     components: list[ComponentInstance] = Field(min_length=1, max_length=MAX_COMPONENTS)
+    groups: list[AssemblyGroup] = Field(default_factory=list, max_length=MAX_GROUPS)
 
     @field_validator("name")
     @classmethod
@@ -205,7 +251,32 @@ class AssemblySpec(BaseModel):
                     f"component '{component.id}' has too many instances "
                     f"({len(component.instances)} > {MAX_INSTANCES})"
                 )
+        group_ids = [g.id for g in self.groups]
+        dupe_groups = {g for g in group_ids if group_ids.count(g) > 1}
+        if dupe_groups:
+            raise ValueError("duplicate group id(s): " + ", ".join(sorted(dupe_groups)))
+        grouped: dict[str, str] = {}
+        for group in self.groups:
+            for member in group.component_ids:
+                if member not in known:
+                    raise ValueError(
+                        f"group '{group.id}' references missing component '{member}'"
+                    )
+                if member in grouped:
+                    raise ValueError(
+                        f"component '{member}' belongs to more than one group "
+                        f"('{grouped[member]}' and '{group.id}')"
+                    )
+                grouped[member] = group.id
         return self
+
+
+def group_of(assembly: AssemblySpec, component_id: str) -> AssemblyGroup | None:
+    """The group a component belongs to, or None. Groups are flat (4.1)."""
+    for group in assembly.groups:
+        if component_id in group.component_ids:
+            return group
+    return None
 
 
 def instance_poses(component: ComponentInstance) -> list[Transform]:
@@ -357,7 +428,7 @@ def promote_part(spec: CADSpec, component_id: str = "generated_1") -> AssemblySp
         document_type="3d_assembly",
         units="mm",
         name=spec.name,
-        schema_version="4.0",
+        schema_version=ASSEMBLY_SCHEMA_VERSION,
         components=[
             ComponentInstance(
                 id=component_id,

@@ -71,7 +71,8 @@ Nameplates, revision items (active = signal border, no side-stripe), model libra
 
 - **Model library** lives in the **left rail**. Categories (Geometry / Fasteners / Mechanical / Electronics / Robotics / Templates) open as compact overlays to the right of the rail — only one open, shell height fixed. **Add** inserts a registry component with no LLM call.
 - **Inspector** is the sole vertical scroll region in the workspace; header sticks while content scrolls.
-- **Assembly tree** lists named objects; selection is shared with the viewport (signal border). Eye toggle is a preview; **Apply placement** commits visibility, name, and transform as one revision.
+- **Assembly tree** lists named objects; selection is shared with the viewport (signal border). ⌘/Ctrl/Shift-click multi-selects; **Group** / **Ungroup** / **Lock** / 90° rotate act on the selection. Eye toggle is a preview; **Apply placement** commits visibility, name, and transform as one revision. Click empty space in the well to clear selection.
+- **Prompt bar** is **Generate** with nothing selected (a new independent object, even if the scene already has parts) and **Modify** when an object is selected.
 - **Object inspector** shows name, XYZ mm / Euler degrees, and registry parameters. Dirty values raise a red cage tick; **Apply** settles the tick. Neither writes a revision until the explicit button.
 - **Viewer** renders each component’s local STL at its transform. Repeated fasteners share one definition and N instance poses. Camera still frames on first load, reset, or a large size change only.
 - **Single-part** documents (schema 3.3) still occupy the scene as one generated object so the tree stays available.

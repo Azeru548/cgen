@@ -284,6 +284,56 @@ def test_generate_success_path_mocked(monkeypatch, tmp_path):
     assert body["generation_time_ms"] >= 0
 
 
+def test_generate_attaches_beside_existing_part(monkeypatch):
+    """Unselected Generate keeps the current scene and adds a new object."""
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "shaft",
+            "operation": {"type": "cylinder", "radius": 10, "height": 80},
+        }
+    )
+    monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
+
+    def fake_export(assembly, *, request_id, file_store, artifacts=None):
+        from app.services.generation import GeneratedFile, GenerationResult
+
+        files = {
+            "step": GeneratedFile("step", "a.step", 10, "/download/TOK?format=step"),
+            "stl": GeneratedFile("stl", "a.stl", 20, "/download/TOK?format=stl"),
+        }
+        return GenerationResult(
+            request_id=request_id,
+            specification=assembly.model_dump(),
+            units="mm",
+            files=files,
+            generation_time_ms=1,
+            component_files={c.id: dict(files) for c in assembly.components},
+        )
+
+    monkeypatch.setattr("app.services.assembly.export_assembly_document", fake_export)
+    existing = {
+        "document_type": "3d_part",
+        "units": "mm",
+        "name": "block",
+        "operation": {"type": "box", "width": 100, "depth": 60, "height": 30},
+    }
+    r = client.post(
+        "/generate",
+        json={"prompt": "Create a shaft.", "specification": existing},
+    )
+    assert r.status_code == 200, r.text
+    components = r.json()["specification"]["components"]
+    assert [c["component_type"] for c in components] == [
+        "generated_part",
+        "generated_part",
+    ]
+    assert components[0]["generated"]["name"] == "block"
+    assert components[1]["generated"]["name"] == "shaft"
+    assert components[1]["transform"]["position"] != components[0]["transform"]["position"]
+
+
 def test_generate_part_with_features_mocked(monkeypatch, tmp_path):
     """M6: a part node (build + features) flows through /generate end to end."""
     spec = CADSpec.model_validate(

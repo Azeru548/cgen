@@ -1,27 +1,115 @@
 "use client";
 
+import type { AssemblyGroup } from "@/types/api";
 import type { SceneObject } from "@/lib/assembly";
 
 interface AssemblyTreeProps {
   name: string;
   objects: SceneObject[];
+  groups: AssemblyGroup[];
   selectedId: string | null;
-  onSelect: (id: string) => void;
+  /** Every selected object id (multi-select, superset of `selectedId`). */
+  selectedIds: string[];
+  onSelect: (id: string, additive: boolean) => void;
+  onSelectGroup: (group: AssemblyGroup) => void;
   onToggleVisible: (id: string) => void;
   onRemove: (id: string) => void;
+  onGroup: () => void;
+  onUngroup: () => void;
+  onLock: () => void;
+  onRotate: (axis: 0 | 1 | 2, degrees: number) => void;
   onFocus?: (id: string) => void;
   busy: boolean;
 }
 
+const AXES: Array<{ axis: 0 | 1 | 2; label: string }> = [
+  { axis: 0, label: "X" },
+  { axis: 1, label: "Y" },
+  { axis: 2, label: "Z" },
+];
+
 export function AssemblyTree({
   name,
   objects,
+  groups,
   selectedId,
+  selectedIds,
   onSelect,
+  onSelectGroup,
   onToggleVisible,
   onRemove,
+  onGroup,
+  onUngroup,
+  onLock,
+  onRotate,
   busy,
 }: AssemblyTreeProps) {
+  const selected = new Set(selectedIds);
+  const groupedIds = new Set(groups.flatMap((group) => group.component_ids));
+  const loose = objects.filter((object) => !groupedIds.has(object.id));
+  const byId = new Map(objects.map((object) => [object.id, object]));
+  const canGroup =
+    selectedIds.length >= 2 && selectedIds.every((id) => !groupedIds.has(id));
+  const canUngroup = groups.some((group) =>
+    group.component_ids.some((id) => selected.has(id)),
+  );
+  const selectedObjects = objects.filter((object) => selected.has(object.id));
+  const allLocked =
+    selectedObjects.length > 0 && selectedObjects.every((object) => object.locked);
+  const canRotate =
+    selectedIds.length > 0 && selectedObjects.some((object) => !object.locked);
+
+  const renderObject = (object: SceneObject, indent: boolean) => {
+    const extra =
+      object.instances.length > 1 ? ` × ${object.instances.length}` : "";
+    const isSelected = object.id === selectedId;
+    const inSelection = selected.has(object.id);
+    return (
+      <li key={object.id} className={indent ? "assembly-member" : undefined}>
+        <button
+          type="button"
+          className={`assembly-item${isSelected ? " selected" : ""}${
+            inSelection && !isSelected ? " co-selected" : ""
+          }`}
+          onClick={(event) =>
+            onSelect(object.id, event.metaKey || event.ctrlKey || event.shiftKey)
+          }
+          disabled={busy}
+          aria-current={isSelected ? "true" : undefined}
+          aria-pressed={inSelection}
+          title="Click to select, ⌘/Ctrl/Shift-click to add to the selection"
+        >
+          <span className="assembly-item-name">
+            {object.name}
+            {extra}
+            {object.locked ? " · locked" : ""}
+          </span>
+          <span className="assembly-item-type">{object.componentType}</span>
+        </button>
+        <button
+          type="button"
+          className="assembly-icon"
+          onClick={() => onToggleVisible(object.id)}
+          disabled={busy}
+          aria-label={object.visible ? `Hide ${object.name}` : `Show ${object.name}`}
+          title={object.visible ? "Hide" : "Show"}
+        >
+          {object.visible ? "●" : "○"}
+        </button>
+        <button
+          type="button"
+          className="assembly-icon danger"
+          onClick={() => onRemove(object.id)}
+          disabled={busy || objects.length < 2}
+          aria-label={`Remove ${object.name}`}
+          title="Remove"
+        >
+          ×
+        </button>
+      </li>
+    );
+  };
+
   return (
     <section className="inspector-section" data-testid="assembly-tree">
       <div className="inspector-label">Assembly</div>
@@ -30,50 +118,111 @@ export function AssemblyTree({
         <p className="inspector-empty-inline">No objects yet. Add a component or generate.</p>
       ) : (
         <ul className="assembly-list">
-          {objects.map((object) => {
-            const extra =
-              object.instances.length > 1 ? ` × ${object.instances.length}` : "";
-            const selected = object.id === selectedId;
+          {groups.map((group) => {
+            const members = group.component_ids
+              .map((id) => byId.get(id))
+              .filter((object): object is SceneObject => object !== undefined);
+            if (members.length === 0) return null;
+            const groupSelected = group.component_ids.every((id) => selected.has(id));
             return (
-              <li key={object.id}>
+              <li key={group.id} className="assembly-group">
                 <button
                   type="button"
-                  className={`assembly-item${selected ? " selected" : ""}`}
-                  onClick={() => onSelect(object.id)}
+                  className={`assembly-group-head${groupSelected ? " selected" : ""}`}
+                  onClick={() => onSelectGroup(group)}
                   disabled={busy}
-                  aria-current={selected ? "true" : undefined}
+                  title="Select every object in this group"
+                  aria-pressed={groupSelected}
                 >
-                  <span className="assembly-item-name">
-                    {object.name}
-                    {extra}
+                  <span className="assembly-group-mark" aria-hidden="true">
+                    ▣
                   </span>
-                  <span className="assembly-item-type">{object.componentType}</span>
+                  <span className="assembly-item-name">{group.name}</span>
+                  <span className="assembly-item-type">{members.length} grouped</span>
                 </button>
-                <button
-                  type="button"
-                  className="assembly-icon"
-                  onClick={() => onToggleVisible(object.id)}
-                  disabled={busy}
-                  aria-label={object.visible ? `Hide ${object.name}` : `Show ${object.name}`}
-                  title={object.visible ? "Hide" : "Show"}
-                >
-                  {object.visible ? "●" : "○"}
-                </button>
-                <button
-                  type="button"
-                  className="assembly-icon danger"
-                  onClick={() => onRemove(object.id)}
-                  disabled={busy || objects.length < 2}
-                  aria-label={`Remove ${object.name}`}
-                  title="Remove"
-                >
-                  ×
-                </button>
+                <ul className="assembly-list">
+                  {members.map((object) => renderObject(object, true))}
+                </ul>
               </li>
             );
           })}
+          {loose.map((object) => renderObject(object, false))}
         </ul>
       )}
+
+      {objects.length > 1 ? (
+        <div className="assembly-bulk" data-testid="assembly-bulk">
+          <p className="assembly-bulk-count mono">
+            {selectedIds.length === 0
+              ? "⌘/Ctrl/Shift-click to multi-select"
+              : `${selectedIds.length} selected`}
+          </p>
+          <div className="assembly-bulk-row">
+            <button
+              type="button"
+              className="assembly-bulk-button"
+              onClick={onGroup}
+              disabled={busy || !canGroup}
+              title={
+                canGroup
+                  ? "Group the selected objects"
+                  : "Select two or more ungrouped objects"
+              }
+            >
+              Group
+            </button>
+            <button
+              type="button"
+              className="assembly-bulk-button"
+              onClick={onUngroup}
+              disabled={busy || !canUngroup}
+              title="Ungroup the selected objects"
+            >
+              Ungroup
+            </button>
+            <button
+              type="button"
+              className="assembly-bulk-button"
+              onClick={onLock}
+              disabled={busy || selectedIds.length === 0}
+              title={
+                allLocked
+                  ? "Unlock the selected objects"
+                  : "Lock the selected objects in place"
+              }
+            >
+              {allLocked ? "Unlock" : "Lock"}
+            </button>
+          </div>
+          <div className="assembly-bulk-row" aria-label="Rotate selection">
+            {AXES.map(({ axis, label }) => (
+              <span key={label} className="assembly-rotate">
+                <span className="assembly-rotate-axis mono">{label}</span>
+                <button
+                  type="button"
+                  className="assembly-bulk-button mono"
+                  onClick={() => onRotate(axis, -90)}
+                  disabled={busy || !canRotate}
+                  aria-label={`Rotate selection ${label} minus 90 degrees`}
+                  title={`Rotate −90° about ${label}`}
+                >
+                  −90
+                </button>
+                <button
+                  type="button"
+                  className="assembly-bulk-button mono"
+                  onClick={() => onRotate(axis, 90)}
+                  disabled={busy || !canRotate}
+                  aria-label={`Rotate selection ${label} plus 90 degrees`}
+                  title={`Rotate +90° about ${label}`}
+                >
+                  +90
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

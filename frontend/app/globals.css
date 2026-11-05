@@ -1954,6 +1954,107 @@ button { font: inherit; color: inherit; }
   border-color: var(--signal);
 }
 
+.assembly-item.co-selected {
+  border-color: var(--border-strong);
+  background: var(--surface-subtle);
+}
+
+.assembly-list li.assembly-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  grid-column: 1 / -1;
+}
+
+.assembly-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 0.35rem 0.55rem;
+  cursor: pointer;
+}
+
+.assembly-group-head:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.assembly-group-head.selected {
+  border-color: var(--signal);
+  background: var(--signal-soft);
+}
+
+.assembly-group-mark {
+  font-size: 0.85rem;
+  color: var(--ink-faint);
+}
+
+.assembly-member {
+  margin-left: 0.7rem;
+}
+
+.assembly-bulk {
+  margin-top: 0.65rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.assembly-bulk-count {
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.assembly-bulk-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.assembly-bulk-button {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.28rem 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 2px;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.assembly-bulk-button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.assembly-bulk-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.assembly-rotate {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.assembly-rotate-axis {
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  width: 0.9rem;
+}
+
 .browser-hint {
   font-size: 0.78rem;
   color: var(--ink-secondary);

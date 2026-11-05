@@ -177,7 +177,7 @@ them. If the request is a single solid, keep returning 3d_part as above.
 
 Assembly JSON shape:
 {"document_type": "3d_assembly", "units": "mm", "name": "arduino_enclosure",
- "schema_version": "4.0",
+ "schema_version": "4.1",
  "components": [
    {"id": "arduino_1", "component_type": "arduino_uno", "name": "Arduino Uno",
     "parameters": {}, "transform": {"position": [0, 0, 8], "rotation": [0, 0, 0]},
@@ -210,7 +210,12 @@ Rules for assemblies:
 - Allowed relationship types: positioned_at, attached_to, aligned_with,
   repeated_from, mounted_on, centered_on.
 - transforms: position in mm, rotation in XYZ Euler degrees.
-- At most 24 components. At most 12 instances per component.
+- Optional "groups" bundles components that belong together ("fasteners",
+  "lid assembly"): [{"id": "group_1", "name": "Fasteners",
+  "component_ids": ["screws_1", "lid_1"]}]. Every group needs at least two
+  members, each component belongs to at most one group, and the field is
+  omitted entirely when the request does not ask for grouping.
+- At most 24 components. At most 12 instances per component. At most 8 groups.
 - If the board cannot physically fit, still return the assembly with a larger
   enclosure rather than omitting the board.
 
@@ -500,11 +505,14 @@ Return a modified 3d_assembly that follows the same schema.
 
 Rules:
 - Return JSON ONLY. No markdown, no explanation, no code fences, no executable code.
-- Preserve document_type "3d_assembly", units "mm", and schema_version "4.0".
+- Preserve document_type "3d_assembly", units "mm", and schema_version
+  "4.0" or "4.1" (keep 4.1 once groups or locks are present).
 - Preserve the name unless the instruction explicitly asks to rename.
 - component_type MUST stay a registry type. NEVER invent types.
-- You MAY change numeric parameters, transforms, visibility, and names.
+- You MAY change numeric parameters, transforms, visibility, names, and locked.
 - You MAY add library components the instruction asks for (enclosure, screws, lid, boards).
+- You MAY add, rename, re-member or remove "groups" (at least two members each,
+  no component in two groups), and you MUST keep existing groups valid.
 - You MAY remove a component the instruction asks to delete.
 - For repeated fasteners, keep ONE component with relationship mounted_on / repeated_from
   rather than duplicating definitions.

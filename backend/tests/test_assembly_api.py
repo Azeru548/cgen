@@ -37,7 +37,7 @@ def test_get_components_catalog():
     r = client.get("/components")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["schema_version"] == "4.0"
+    assert body["schema_version"] == "4.1"
     types = {c["type"] for c in body["components"]}
     assert "m3_screw" in types
     assert "arduino_uno" in types
@@ -215,6 +215,76 @@ def test_assembly_update_missing_id(monkeypatch):
         },
     )
     assert r.status_code == 422
+
+
+def test_assembly_update_lock(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.assembly.export_assembly_document", _fake_export
+    )
+    spec = AssemblySpec(
+        name="s",
+        components=[
+            ComponentInstance(
+                id="box_1",
+                component_type="box",
+                name="Box",
+                parameters={"width": 10, "depth": 10, "height": 10},
+            )
+        ],
+    )
+    r = client.post(
+        "/assembly/update",
+        json={
+            "specification": spec.model_dump(),
+            "component_id": "box_1",
+            "locked": True,
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["specification"]["components"][0]["locked"] is True
+
+
+def test_assembly_remove_prunes_groups(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.assembly.export_assembly_document", _fake_export
+    )
+    spec = AssemblySpec(
+        name="two",
+        schema_version="4.1",
+        components=[
+            ComponentInstance(
+                id="box_1",
+                component_type="box",
+                name="Box",
+                parameters={"width": 10, "depth": 10, "height": 10},
+            ),
+            ComponentInstance(
+                id="sphere_1",
+                component_type="sphere",
+                name="Sphere",
+                parameters={"radius": 5},
+            ),
+            ComponentInstance(
+                id="cyl_1",
+                component_type="cylinder",
+                name="Cylinder",
+                parameters={"radius": 5, "height": 20},
+            ),
+        ],
+        groups=[
+            {
+                "id": "group_1",
+                "name": "Pair",
+                "component_ids": ["box_1", "sphere_1"],
+            }
+        ],
+    )
+    r = client.post(
+        "/assembly/remove",
+        json={"specification": spec.model_dump(), "component_id": "sphere_1"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["specification"]["groups"] == []
 
 
 def test_generate_assembly_plan(monkeypatch):

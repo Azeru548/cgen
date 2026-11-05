@@ -122,6 +122,11 @@ class GenerateRequest(BaseModel):
         description="Natural-language description of the 3D part to generate. "
         "1-2000 characters; dimensions in any common unit (normalized to mm)."
     )
+    specification: dict | None = Field(
+        default=None,
+        description="When set, the new part is added beside this existing "
+        "document instead of replacing the scene.",
+    )
 
 
 class ModifyRequest(BaseModel):
@@ -407,7 +412,11 @@ def generate(body: GenerateRequest, caller: Caller_):
     request_id = uuid.uuid4().hex
     try:
         result = run_generation(
-            body.prompt, request_id=request_id, file_store=file_store, artifacts=artifact_store
+            body.prompt,
+            request_id=request_id,
+            file_store=file_store,
+            artifacts=artifact_store,
+            current_spec=body.specification,
         )
     except InvalidPromptError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -590,6 +599,7 @@ class AssemblyUpdateRequest(BaseModel):
     visible: bool | None = None
     name: str | None = None
     instances: list[dict] | None = None
+    locked: bool | None = None
 
 
 def _parse_transform(raw: dict | None):
@@ -723,6 +733,7 @@ def assembly_update(body: AssemblyUpdateRequest, caller: Caller_):
             visible=body.visible,
             name=body.name,
             instances=_parse_instances(body.instances),
+            locked=body.locked,
             request_id=request_id,
             file_store=file_store,
             artifacts=artifact_store,

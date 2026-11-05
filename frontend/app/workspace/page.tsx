@@ -23,6 +23,7 @@ import {
   generatePart,
   humanizeApiError,
   modifyPart,
+  rebuildPart,
   remintFiles,
   removeAssemblyComponent,
   resolveFileUrl,
@@ -30,8 +31,15 @@ import {
   type ApiError,
 } from "@/lib/api";
 import {
+  expandSelectionToGroups,
+  groupSelection,
+  groupsOf,
+  isAssemblySpec,
   isPartSpec,
+  rotateSelection,
   sceneObjects,
+  setSelectionLocked,
+  ungroupSelection,
   type SceneObject,
 } from "@/lib/assembly";
 import { useParametricSession } from "@/lib/useParametricSession";
@@ -48,6 +56,7 @@ import {
 import { deleteWorkspaceRecord } from "@/lib/projectStore";
 import { computeLiveScale } from "@/lib/parameters";
 import type {
+  AssemblyGroup,
   CatalogComponent,
   GenerateResponse,
   ParamValue,
@@ -115,6 +124,9 @@ export default function Home() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [catalog, setCatalog] = useState<CatalogComponent[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Multi-selection for grouping and group rotation. `selectedId` stays the
+  // primary object (what the object inspector edits); this is the working set.
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedInstance, setSelectedInstance] = useState(-1);
   const [visibilityDraft, setVisibilityDraft] = useState<Record<string, boolean>>(
     {},
@@ -150,6 +162,19 @@ export default function Home() {
   useEffect(() => {
     moveOriginRef.current = moveOrigin;
   }, [moveOrigin]);
+  // Sibling origins for grouped objects that travel with the gizmo target.
+  const groupMoveOriginsRef = useRef<
+    Record<
+      string,
+      {
+        position: [number, number, number];
+        instances: Array<{
+          position: [number, number, number];
+          rotation: [number, number, number];
+        }>;
+      }
+    >
+  >({});
   const selectedInstanceRef = useRef(selectedInstance);
   useEffect(() => {
     selectedInstanceRef.current = selectedInstance;
@@ -364,7 +389,32 @@ export default function Home() {
     };
     moveOriginRef.current = origin;
     setMoveOrigin(origin);
-  }, [selectedObject, draftPosition, draftInstances]);
+    const spec = displayResult?.specification;
+    const companions: typeof groupMoveOriginsRef.current = {};
+    if (spec && activeSelectedId !== null) {
+      const movingIds = expandSelectionToGroups(spec, [activeSelectedId]);
+      for (const id of movingIds) {
+        if (id === activeSelectedId) continue;
+        const object = objects.find((item) => item.id === id);
+        if (object === undefined || object.locked) continue;
+        companions[id] = {
+          position: [...object.transform.position] as [number, number, number],
+          instances: object.instances.map((inst) => ({
+            position: [...inst.position] as [number, number, number],
+            rotation: [...inst.rotation] as [number, number, number],
+          })),
+        };
+      }
+    }
+    groupMoveOriginsRef.current = companions;
+  }, [
+    selectedObject,
+    draftPosition,
+    draftInstances,
+    displayResult,
+    activeSelectedId,
+    objects,
+  ]);
 
   const handleMoveDelta = useCallback(
     (delta: [number, number, number]) => {
@@ -419,6 +469,28 @@ export default function Home() {
           ...(nextInstances.length > 0 ? { instances: nextInstances } : {}),
         });
       }
+      for (const [id, companion] of Object.entries(groupMoveOriginsRef.current)) {
+        const companionPosition: [number, number, number] = [
+          companion.position[0] + delta[0],
+          companion.position[1] + delta[1],
+          companion.position[2] + delta[2],
+        ];
+        const companionInstances =
+          companion.instances.length > 0
+            ? companion.instances.map((inst) => ({
+                position: [
+                  inst.position[0] + delta[0],
+                  inst.position[1] + delta[1],
+                  inst.position[2] + delta[2],
+                ] as [number, number, number],
+                rotation: inst.rotation,
+              }))
+            : [];
+        rememberPlacement(id, {
+          position: companionPosition,
+          ...(companionInstances.length > 0 ? { instances: companionInstances } : {}),
+        });
+      }
     },
     [activeSelectedId, rememberPlacement],
   );
@@ -426,6 +498,7 @@ export default function Home() {
   const handleMoveEnd = useCallback(() => {
     setMoving(false);
     setMoveOrigin(null);
+    groupMoveOriginsRef.current = {};
   }, []);
 
   // Instant dial feedback: scale the currently displayed mesh toward the
@@ -468,12 +541,58 @@ export default function Home() {
   const handleSelectObject = useCallback(
     (id: string | null, instanceIndex = -1) => {
       setSelectedId(id);
+      setSelectedIds(id === null ? [] : [id]);
       setSelectedInstance(id === null ? -1 : instanceIndex);
       if (id === null || id === selectedId) return;
       const object = objects.find((item) => item.id === id);
       if (object) hydrateDrafts(object);
     },
     [objects, hydrateDrafts, selectedId],
+  );
+
+  const handleTreeSelect = useCallback(
+    (id: string, additive: boolean) => {
+      if (!additive) {
+        handleSelectObject(id, -1);
+        return;
+      }
+      setSelectedIds((prev) => {
+        if (prev.includes(id)) {
+          const next = prev.filter((item) => item !== id);
+          if (selectedId === id) {
+            const fallback = next[0] ?? null;
+            setSelectedId(fallback);
+            setSelectedInstance(-1);
+            const object = objects.find((item) => item.id === fallback);
+            if (object) hydrateDrafts(object);
+          }
+          return next;
+        }
+        if (selectedId === null) {
+          setSelectedId(id);
+          setSelectedInstance(-1);
+          const object = objects.find((item) => item.id === id);
+          if (object) hydrateDrafts(object);
+        }
+        return [...prev, id];
+      });
+    },
+    [handleSelectObject, selectedId, objects, hydrateDrafts],
+  );
+
+  const handleSelectGroup = useCallback(
+    (group: AssemblyGroup) => {
+      const members = group.component_ids.filter((id) =>
+        objects.some((object) => object.id === id),
+      );
+      if (members.length === 0) return;
+      setSelectedIds(members);
+      setSelectedId(members[0]);
+      setSelectedInstance(-1);
+      const object = objects.find((item) => item.id === members[0]);
+      if (object) hydrateDrafts(object);
+    },
+    [objects, hydrateDrafts],
   );
 
   const handleGenerate = useCallback(async () => {
@@ -492,10 +611,18 @@ export default function Home() {
     track("generate_started");
     try {
       const text = prompt.trim();
-      const response = await generatePart(text, controller.signal);
+      const host =
+        visible !== null
+          ? (visible.response.specification as unknown as Record<string, unknown>)
+          : null;
+      const response = await generatePart(text, controller.signal, host);
       setProject((p) => appendRevision(p, "generate", text, response));
       setStatus("ready");
       clearDrafts();
+      setSelectedId(null);
+      setSelectedIds([]);
+      setSelectedInstance(-1);
+      setPrompt("");
       track("generate_completed");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
@@ -503,7 +630,7 @@ export default function Home() {
       setGenerateError(humanizeApiError(err as ApiError));
       setStatus("error");
     }
-  }, [prompt, status, clearDrafts]);
+  }, [prompt, status, clearDrafts, visible]);
 
   const handleModify = useCallback(async () => {
     if (status === "generating" || visible === null) return;
@@ -521,9 +648,14 @@ export default function Home() {
     track("modify_started");
     try {
       const text = prompt.trim();
+      const spec = visible.response.specification;
+      const focused =
+        activeSelectedId !== null && isAssemblySpec(spec)
+          ? `Modify only component '${activeSelectedId}' (${selectedObject?.name ?? activeSelectedId}). Leave every other object unchanged. ${text}`
+          : text;
       const response = await modifyPart(
-        visible.response.specification as unknown as Record<string, unknown>,
-        text,
+        spec as unknown as Record<string, unknown>,
+        focused,
         controller.signal,
       );
       setProject((p) => appendRevision(p, "modify", text, response));
@@ -536,7 +668,7 @@ export default function Home() {
       setGenerateError(humanizeApiError(err as ApiError));
       setStatus("error");
     }
-  }, [prompt, status, visible, clearDrafts]);
+  }, [prompt, status, visible, clearDrafts, activeSelectedId, selectedObject]);
 
   const handleParamCommit = useCallback(async () => {
     if (status === "generating") return;
@@ -640,6 +772,68 @@ export default function Home() {
       return { ...prev, [id]: !shown };
     });
   }, [objects]);
+
+  const commitSpecPatch = useCallback(
+    (label: string, next: ReturnType<typeof groupSelection>) => {
+      if (next === null || visible === null) return;
+      void commitAssembly(label, () =>
+        rebuildPart(
+          visible.response.specification as unknown as Record<string, unknown>,
+          next as unknown as Record<string, unknown>,
+          abortRef.current?.signal,
+        ),
+      ).then((ok) => {
+        if (ok) clearDrafts();
+      });
+    },
+    [visible, commitAssembly, clearDrafts],
+  );
+
+  const handleGroup = useCallback(() => {
+    if (visible === null) return;
+    commitSpecPatch(
+      "Group",
+      groupSelection(visible.response.specification, selectedIds, ""),
+    );
+  }, [visible, selectedIds, commitSpecPatch]);
+
+  const handleUngroup = useCallback(() => {
+    if (visible === null) return;
+    commitSpecPatch(
+      "Ungroup",
+      ungroupSelection(visible.response.specification, selectedIds),
+    );
+  }, [visible, selectedIds, commitSpecPatch]);
+
+  const handleLock = useCallback(() => {
+    if (visible === null) return;
+    const selectedObjects = objects.filter((object) => selectedIds.includes(object.id));
+    const allLocked =
+      selectedObjects.length > 0 && selectedObjects.every((object) => object.locked);
+    commitSpecPatch(
+      allLocked ? "Unlock" : "Lock",
+      setSelectionLocked(visible.response.specification, selectedIds, !allLocked),
+    );
+  }, [visible, objects, selectedIds, commitSpecPatch]);
+
+  const handleRotate = useCallback(
+    (axis: 0 | 1 | 2, degrees: number) => {
+      if (visible === null) return;
+      const spec = visible.response.specification;
+      const unlocked = selectedIds.filter((id) => {
+        const object = objects.find((item) => item.id === id);
+        return object !== undefined && !object.locked;
+      });
+      const ids = expandSelectionToGroups(spec, unlocked).filter((id) => {
+        const object = objects.find((item) => item.id === id);
+        return object !== undefined && !object.locked;
+      });
+      const delta: [number, number, number] = [0, 0, 0];
+      delta[axis] = degrees;
+      commitSpecPatch("Rotate", rotateSelection(spec, ids, delta));
+    },
+    [visible, selectedIds, objects, commitSpecPatch],
+  );
 
   // Inspector XYZ targets the selected instance when one is active, so the
   // fields and the gizmo always manipulate the same thing.
@@ -881,14 +1075,14 @@ export default function Home() {
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
-        if (visible !== null) {
+        if (activeSelectedId !== null) {
           handleModify();
         } else {
           handleGenerate();
         }
       }
     },
-    [handleGenerate, handleModify, visible],
+    [handleGenerate, handleModify, activeSelectedId],
   );
 
   const busy = status === "generating";
@@ -995,7 +1189,11 @@ export default function Home() {
             onSelectExample={setPrompt}
             onSelectObject={handleSelectObject}
             liveScale={liveScale}
-            canDrag={!busy && activeSelectedId !== null}
+            canDrag={
+              !busy &&
+              activeSelectedId !== null &&
+              selectedObject?.locked !== true
+            }
             onMoveStart={handleMoveStart}
             onMoveDelta={handleMoveDelta}
             onMoveEnd={handleMoveEnd}
@@ -1005,7 +1203,7 @@ export default function Home() {
             {status === "error" && generateError ? (
               <div className="error-box">
                 <div className="error-title">
-                  {visible !== null ? "Modification failed" : "Generation failed"}
+                  {activeSelectedId !== null ? "Modification failed" : "Generation failed"}
                 </div>
                 <div className="error-text">{generateError}</div>
               </div>
@@ -1015,8 +1213,8 @@ export default function Home() {
                 ref={textareaRef}
                 className="prompt-input"
                 placeholder={
-                  visible !== null
-                    ? "Describe how to modify this part..."
+                  activeSelectedId !== null
+                    ? "Describe how to modify the selected part..."
                     : "Describe the part you want to build..."
                 }
                 value={prompt}
@@ -1025,15 +1223,29 @@ export default function Home() {
                 disabled={busy}
                 rows={2}
                 maxLength={MAX_PROMPT_LENGTH}
-                aria-label={visible !== null ? "Modification instruction" : "Part description"}
+                aria-label={
+                  activeSelectedId !== null
+                    ? "Modification instruction"
+                    : "Part description"
+                }
               />
               <button
                 className="generate-button"
-                onClick={visible !== null ? handleModify : handleGenerate}
+                onClick={
+                  activeSelectedId !== null ? handleModify : handleGenerate
+                }
                 disabled={busy || prompt.trim().length === 0}
-                aria-label={visible !== null ? "Modify CAD model" : "Generate CAD model"}
+                aria-label={
+                  activeSelectedId !== null
+                    ? "Modify selected CAD model"
+                    : "Generate CAD model"
+                }
               >
-                {busy ? "Working..." : visible !== null ? "Modify" : "Generate"}
+                {busy
+                  ? "Working..."
+                  : activeSelectedId !== null
+                    ? "Modify"
+                    : "Generate"}
               </button>
             </div>
             <div className="prompt-footer">
@@ -1042,10 +1254,10 @@ export default function Home() {
               </span>
               <span className="char-count">
                 {busy
-                  ? visible !== null
+                  ? activeSelectedId !== null
                     ? "Modifying…"
                     : "Generating…"
-                  : `Ctrl+Enter to ${visible !== null ? "modify" : "generate"}`}
+                  : `Ctrl+Enter to ${activeSelectedId !== null ? "modify" : "generate"}`}
               </span>
             </div>
           </div>
@@ -1068,10 +1280,21 @@ export default function Home() {
                       : activeWorkspace.name
                   }
                   objects={objects}
+                  groups={
+                    displayResult
+                      ? groupsOf(displayResult.specification)
+                      : []
+                  }
                   selectedId={activeSelectedId}
-                  onSelect={handleSelectObject}
+                  selectedIds={selectedIds}
+                  onSelect={handleTreeSelect}
+                  onSelectGroup={handleSelectGroup}
                   onToggleVisible={handleToggleVisible}
                   onRemove={handleRemoveComponent}
+                  onGroup={handleGroup}
+                  onUngroup={handleUngroup}
+                  onLock={handleLock}
+                  onRotate={handleRotate}
                   busy={busy}
                 />
                 <ObjectInspector

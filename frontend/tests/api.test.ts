@@ -75,6 +75,23 @@ describe("generatePart", () => {
     expect(JSON.parse(init.body as string)).toEqual({ prompt: "Create a shaft." });
   });
 
+  it("posts the current specification when generating beside an existing scene", async () => {
+    await generatePart("Create a shaft.", undefined, {
+      document_type: "3d_part",
+      units: "mm",
+      name: "block",
+    });
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
+      prompt: "Create a shaft.",
+      specification: {
+        document_type: "3d_part",
+        units: "mm",
+        name: "block",
+      },
+    });
+  });
+
   it("parses a successful response", async () => {
     const result = await generatePart("Create a shaft.");
     expect(result.status).toBe("completed");

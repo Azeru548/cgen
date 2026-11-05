@@ -106,6 +106,7 @@ def run_generation(
     request_id: str,
     file_store: FileStore,
     artifacts: ArtifactStore | None = None,
+    current_spec: dict | None = None,
 ) -> GenerationResult:
     """Execute one generation and return the frontend-friendly result.
 
@@ -132,6 +133,27 @@ def run_generation(
         ai_started = time.monotonic()
         spec = groq_client.parse_prompt_to_spec(prompt.strip())
         ai_ms = int((time.monotonic() - ai_started) * 1000)
+        if current_spec is not None:
+            from .assembly import attach_document, parse_document
+
+            host = parse_document(current_spec)
+            logger.info(
+                "ai_spec_generated request_id=%s stem=%s document=%s "
+                "attach_to_existing=1 ai_ms=%d",
+                request_id,
+                spec.name,
+                spec.document_type,
+                ai_ms,
+            )
+            result = attach_document(
+                host,
+                spec,
+                request_id=request_id,
+                file_store=file_store,
+                artifacts=artifacts,
+            )
+            result.generation_time_ms = int((time.monotonic() - started) * 1000)
+            return result
         if isinstance(spec, AssemblySpec):
             from .assembly import export_assembly_document
 

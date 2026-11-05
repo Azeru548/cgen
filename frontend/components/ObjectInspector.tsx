@@ -61,7 +61,9 @@ export function ObjectInspector({
         />
       </label>
       <p className="object-type mono">{object.componentType}</p>
-      <h3 className="spec-subtitle">Placement</h3>
+      <h3 className="spec-subtitle">
+        Placement{object.locked ? " · locked" : ""}
+      </h3>
       <div className="object-xyz">
         {(["X", "Y", "Z"] as const).map((label, i) => (
           <label key={label} className="object-field">
@@ -72,7 +74,7 @@ export function ObjectInspector({
               step={0.5}
               value={draftPosition[i]}
               onChange={(e) => onPosition(i as 0 | 1 | 2, Number(e.target.value))}
-              disabled={busy}
+              disabled={busy || object.locked}
             />
           </label>
         ))}
@@ -87,7 +89,7 @@ export function ObjectInspector({
               step={1}
               value={draftRotation[i]}
               onChange={(e) => onRotation(i as 0 | 1 | 2, Number(e.target.value))}
-              disabled={busy}
+              disabled={busy || object.locked}
             />
           </label>
         ))}
@@ -95,7 +97,7 @@ export function ObjectInspector({
       <button
         type="button"
         className="object-apply"
-        disabled={busy || !placementDirty}
+        disabled={busy || object.locked || !placementDirty}
         onClick={onApplyPlacement}
       >
         Apply placement

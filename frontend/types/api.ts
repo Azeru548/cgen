@@ -1,4 +1,5 @@
-/** Strict TypeScript mirrors of the cgen backend contract (schema v3.3).
+/** Strict TypeScript mirrors of the cgen backend contract (schema v3.3 part,
+ *  v4.1 assembly).
  *  The frontend never reconstructs CAD geometry from these types —
  *  the specification is display/debug information only.
  *  No `any` anywhere in this file.
@@ -206,14 +207,25 @@ export interface ComponentInstance {
   instances: Transform[];
   relationships: Relationship[];
   generated?: CadSpecification | null;
+  locked?: boolean;
+}
+
+/** Schema 4.1: a named bundle of components that rotate/move together.
+ *  Members keep absolute transforms — a group is a handle, not a frame. */
+export interface AssemblyGroup {
+  id: string;
+  name: string;
+  component_ids: string[];
 }
 
 export interface AssemblySpecification {
   document_type: "3d_assembly";
   units: "mm";
   name: string;
-  schema_version: "4.0";
+  /** 4.0 documents predate groups and still rebuild. */
+  schema_version: "4.0" | "4.1";
   components: ComponentInstance[];
+  groups?: AssemblyGroup[];
 }
 
 export type DocumentSpecification = CadSpecification | AssemblySpecification;

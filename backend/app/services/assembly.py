@@ -14,6 +14,7 @@ from ..cad import assembly as assembly_schema
 from ..cad import cadquery_engine
 from ..cad import registry
 from ..cad.assembly import (
+    AssemblyGroup,
     AssemblySpec,
     ComponentInstance,
     Transform,
@@ -252,11 +253,13 @@ def add_component(
         existing: set[str] = set()
         assembly_name = definition.display_name.lower().replace(" ", "_")
         prior: list[ComponentInstance] = []
+        groups: list[AssemblyGroup] = []
     else:
         current_assembly = as_assembly(current)
         existing = {c.id for c in current_assembly.components}
         assembly_name = current_assembly.name
         prior = list(current_assembly.components)
+        groups = list(current_assembly.groups)
 
     new_id = allocate_component_id(existing, component_type)
     display = name.strip() if isinstance(name, str) and name.strip() else definition.display_name
@@ -276,7 +279,9 @@ def add_component(
     )
     next_spec = AssemblySpec(
         name=assembly_name,
+        schema_version=assembly_schema.ASSEMBLY_SCHEMA_VERSION,
         components=prior + [added],
+        groups=groups,
     )
     return _export(
         next_spec, request_id=request_id, file_store=file_store, artifacts=artifacts
@@ -318,10 +323,29 @@ def remove_component(
         raise ValueError(f"No component with id '{component_id}' in this assembly.")
     if not remaining:
         raise ValueError("Cannot remove the last object. Clear the viewer instead.")
-    next_spec = assembly.model_copy(update={"components": remaining})
+    remaining_ids = {c.id for c in remaining}
+    next_spec = assembly.model_copy(
+        update={
+            "components": remaining,
+            "groups": _prune_groups(assembly.groups, remaining_ids),
+        }
+    )
     return _export(
         next_spec, request_id=request_id, file_store=file_store, artifacts=artifacts
     )
+
+
+def _prune_groups(
+    groups: list[AssemblyGroup], remaining_ids: set[str]
+) -> list[AssemblyGroup]:
+    """Drop missing members; a group with fewer than two members disappears."""
+    pruned: list[AssemblyGroup] = []
+    for group in groups:
+        members = [member for member in group.component_ids if member in remaining_ids]
+        if len(members) < 2:
+            continue
+        pruned.append(group.model_copy(update={"component_ids": members}))
+    return pruned
 
 
 def update_component(
@@ -333,6 +357,7 @@ def update_component(
     visible: bool | None,
     name: str | None,
     instances: list[Transform] | None,
+    locked: bool | None = None,
     request_id: str,
     file_store: FileStore,
     artifacts: ArtifactStore | None = None,
@@ -359,6 +384,7 @@ def update_component(
                     "visible": component.visible if visible is None else visible,
                     "name": new_name,
                     "instances": instances if instances is not None else component.instances,
+                    "locked": component.locked if locked is None else locked,
                 }
             )
         )
@@ -407,4 +433,115 @@ def rebuild_assembly(
         raise ModificationRejectedError("No changes detected in the assembly.")
     return _export(
         new_a, request_id=request_id, file_store=file_store, artifacts=artifacts
+    )
+
+
+def _shift_transform(pose: Transform, delta: tuple[float, float, float]) -> Transform:
+    x, y, z = pose.position
+    dx, dy, dz = delta
+    return pose.model_copy(update={"position": (x + dx, y + dy, z + dz)})
+
+
+def _rekey_assembly(
+    incoming: AssemblySpec,
+    taken_ids: set[str],
+    taken_group_ids: set[str],
+    offset: tuple[float, float, float],
+) -> tuple[list[ComponentInstance], list[AssemblyGroup]]:
+    """Copy an assembly beside an existing one: unique ids, no host links."""
+    mapping: dict[str, str] = {}
+    used = set(taken_ids)
+    for component in incoming.components:
+        new_id = allocate_component_id(used, component.component_type)
+        mapping[component.id] = new_id
+        used.add(new_id)
+    added: list[ComponentInstance] = []
+    for component in incoming.components:
+        relationships = [
+            rel.model_copy(update={"target_id": mapping[rel.target_id]})
+            for rel in component.relationships
+            if rel.target_id in mapping
+        ]
+        added.append(
+            component.model_copy(
+                update={
+                    "id": mapping[component.id],
+                    "transform": _shift_transform(component.transform, offset),
+                    "instances": [
+                        _shift_transform(pose, offset) for pose in component.instances
+                    ],
+                    "relationships": relationships,
+                }
+            )
+        )
+    groups: list[AssemblyGroup] = []
+    used_groups = set(taken_group_ids)
+    for group in incoming.groups:
+        members = [mapping[member] for member in group.component_ids if member in mapping]
+        if len(members) < 2:
+            continue
+        new_gid = allocate_component_id(used_groups, "group")
+        used_groups.add(new_gid)
+        groups.append(
+            group.model_copy(update={"id": new_gid, "component_ids": members})
+        )
+    return added, groups
+
+
+def attach_document(
+    current: CADSpec | AssemblySpec,
+    incoming: CADSpec | AssemblySpec,
+    *,
+    request_id: str,
+    file_store: FileStore,
+    artifacts: ArtifactStore | None = None,
+) -> GenerationResult:
+    """Place a newly generated document beside the current scene.
+
+    The new objects keep their internal relationships and get a deterministic
+    offset so they do not stack on the existing parts. Nothing is mated to
+    the host — that is the unselected Generate path.
+    """
+    host = as_assembly(current)
+    if len(host.components) >= assembly_schema.MAX_COMPONENTS:
+        raise ValueError(
+            f"Assembly already has {assembly_schema.MAX_COMPONENTS} components."
+        )
+    offset_pose = manual_placement_transform(
+        len(host.components), "box", {"width": 40, "depth": 40, "height": 10}
+    )
+    taken = {c.id for c in host.components}
+    taken_groups = {g.id for g in host.groups}
+    if isinstance(incoming, CADSpec):
+        new_id = allocate_component_id(taken, "generated_part")
+        added = [
+            ComponentInstance(
+                id=new_id,
+                component_type="generated_part",
+                name=incoming.name,
+                generated=incoming,
+                transform=offset_pose,
+            )
+        ]
+        extra_groups: list[AssemblyGroup] = []
+    else:
+        added, extra_groups = _rekey_assembly(
+            incoming, taken, taken_groups, offset_pose.position
+        )
+    if len(host.components) + len(added) > assembly_schema.MAX_COMPONENTS:
+        raise ValueError(
+            f"Adding {len(added)} objects would exceed "
+            f"{assembly_schema.MAX_COMPONENTS} components."
+        )
+    if len(host.groups) + len(extra_groups) > assembly_schema.MAX_GROUPS:
+        extra_groups = extra_groups[: max(0, assembly_schema.MAX_GROUPS - len(host.groups))]
+    next_spec = host.model_copy(
+        update={
+            "components": list(host.components) + added,
+            "groups": list(host.groups) + extra_groups,
+            "schema_version": assembly_schema.ASSEMBLY_SCHEMA_VERSION,
+        }
+    )
+    return _export(
+        next_spec, request_id=request_id, file_store=file_store, artifacts=artifacts
     )

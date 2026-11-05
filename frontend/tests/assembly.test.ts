@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  expandSelectionToGroups,
+  groupSelection,
   isAssemblySpec,
   isPartSpec,
   posesOf,
+  rotateSelection,
   sceneObjects,
+  setSelectionLocked,
+  ungroupSelection,
   withComponentPatch,
 } from "../lib/assembly";
 import type {
@@ -146,5 +151,61 @@ describe("assembly scene", () => {
     expect(isPartSpec(PART)).toBe(true);
     expect(isAssemblySpec(ASSEMBLY)).toBe(true);
     expect(isPartSpec(ASSEMBLY)).toBe(false);
+  });
+});
+
+describe("groups and rotation", () => {
+  it("groups two loose components and refuses a second membership", () => {
+    const grouped = groupSelection(ASSEMBLY, ["arduino_1", "screws_1"], "Board");
+    expect(grouped).not.toBeNull();
+    expect(grouped?.schema_version).toBe("4.1");
+    expect(grouped?.groups).toEqual([
+      {
+        id: "group_1",
+        name: "Board",
+        component_ids: ["arduino_1", "screws_1"],
+      },
+    ]);
+    expect(groupSelection(grouped!, ["arduino_1", "screws_1"], "Again")).toBeNull();
+  });
+
+  it("ungroups by overlapping selection", () => {
+    const grouped = groupSelection(ASSEMBLY, ["arduino_1", "screws_1"], "Board");
+    const next = ungroupSelection(grouped!, ["screws_1"]);
+    expect(next?.groups).toEqual([]);
+  });
+
+  it("rotates a pair about their centroid", () => {
+    const pair: AssemblySpecification = {
+      ...ASSEMBLY,
+      components: [
+        {
+          ...ASSEMBLY.components[0],
+          transform: { position: [10, 0, 0], rotation: [0, 0, 0] },
+        },
+        {
+          ...ASSEMBLY.components[1],
+          transform: { position: [-10, 0, 0], rotation: [0, 0, 0] },
+          instances: [],
+        },
+      ],
+    };
+    const next = rotateSelection(pair, ["arduino_1", "screws_1"], [0, 0, 90]);
+    expect(next).not.toBeNull();
+    expect(next?.components[0].transform.position).toEqual([0, 10, 0]);
+    expect(next?.components[1].transform.position).toEqual([0, -10, 0]);
+    expect(next?.components[0].transform.rotation[2]).toBe(90);
+    expect(next?.components[1].transform.rotation[2]).toBe(90);
+  });
+
+  it("locks selected components and expands a group selection", () => {
+    const grouped = groupSelection(ASSEMBLY, ["arduino_1", "screws_1"], "Board")!;
+    const locked = setSelectionLocked(grouped, ["arduino_1"], true)!;
+    expect(locked.components[0].locked).toBe(true);
+    expect(locked.components[1].locked).toBeFalsy();
+    expect(expandSelectionToGroups(grouped, ["arduino_1"])).toEqual([
+      "arduino_1",
+      "screws_1",
+    ]);
   });
 });

@@ -324,6 +324,10 @@ export function CadViewport({
   const handleOrbitEnabled = useCallback((enabled: boolean) => {
     setOrbitEnabled(enabled);
   }, []);
+  const pointerMoved = useRef(false);
+  const clearSelectionIfClick = useCallback(() => {
+    if (!pointerMoved.current) onSelectObject?.(null);
+  }, [onSelectObject]);
 
   const chooseMaterial = useCallback((id: MaterialId) => {
     setMaterial(id);
@@ -353,6 +357,13 @@ export function CadViewport({
           toneMapping: THREE.ACESFilmicToneMapping,
           toneMappingExposure: 1.05,
         }}
+        onPointerDown={() => {
+          pointerMoved.current = false;
+        }}
+        onPointerMove={(event) => {
+          if (event.buttons) pointerMoved.current = true;
+        }}
+        onPointerMissed={clearSelectionIfClick}
       >
         <color attach="background" args={["#0e1014"]} />
         <CaptureTarget onCanvas={handleCanvas} />
@@ -393,7 +404,7 @@ export function CadViewport({
           />
         </Environment>
         <Suspense fallback={null}>
-          <group onPointerMissed={() => onSelectObject?.(null)}>
+          <group>
             <DragGroup
               objects={visible}
               canDrag={canDrag && !busy}
@@ -423,6 +434,7 @@ export function CadViewport({
             resolution={256}
             frames={1}
             color="#000000"
+            onClick={clearSelectionIfClick}
           />
           <Grid
             position={[0, floorY, 0]}
@@ -436,6 +448,10 @@ export function CadViewport({
             fadeDistance={1400}
             fadeStrength={2}
             infiniteGrid
+            onClick={(event) => {
+              event.stopPropagation();
+              clearSelectionIfClick();
+            }}
           />
         </Suspense>
         <OrbitControls

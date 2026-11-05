@@ -5,6 +5,7 @@
  *  and never write a revision until an explicit commit.
  */
 import type {
+  AssemblyGroup,
   AssemblySpecification,
   CadSpecification,
   CatalogComponent,
@@ -14,6 +15,7 @@ import type {
   ParamValue,
   Transform,
 } from "@/types/api";
+import { centroid, rotatePose, type Vec3 } from "@/lib/transforms";
 
 export interface SceneObject {
   id: string;
@@ -25,6 +27,7 @@ export interface SceneObject {
   instances: Transform[];
   stlUrl: string | null;
   parameterized: boolean;
+  locked: boolean;
 }
 
 export function isPartSpec(spec: DocumentSpecification): spec is CadSpecification {
@@ -64,6 +67,7 @@ export function sceneObjects(
         instances: [],
         stlUrl: resolveUrl(response.files.stl.download_url),
         parameterized: true,
+        locked: false,
       },
     ];
   }
@@ -82,6 +86,7 @@ export function sceneObjects(
       instances: component.instances,
       stlUrl: stlPath ? resolveUrl(stlPath) : null,
       parameterized: def?.parameterized ?? Object.keys(component.parameters).length > 0,
+      locked: component.locked === true,
     };
   });
 }
@@ -117,6 +122,179 @@ export function withComponentPatch(
     components: spec.components.map((c) =>
       c.id === componentId ? { ...c, ...patch } : c,
     ),
+  };
+}
+
+// --- Groups (schema 4.1) -----------------------------------------------------
+
+/** Groups on an assembly; a single-part document has none. */
+export function groupsOf(spec: DocumentSpecification): AssemblyGroup[] {
+  if (!isAssemblySpec(spec)) return [];
+  return spec.groups ?? [];
+}
+
+/** The group a component belongs to (groups are flat, one group max). */
+export function groupForComponent(
+  spec: DocumentSpecification,
+  componentId: string,
+): AssemblyGroup | null {
+  return (
+    groupsOf(spec).find((group) => group.component_ids.includes(componentId)) ??
+    null
+  );
+}
+
+/** Replace a document's groups without touching components or transforms. */
+export function withGroups(
+  spec: AssemblySpecification,
+  groups: AssemblyGroup[],
+): AssemblySpecification {
+  return { ...spec, groups };
+}
+
+/** Deterministic `group_N` id that does not collide with existing groups. */
+export function allocateGroupId(groups: AssemblyGroup[]): string {
+  const taken = new Set(groups.map((group) => group.id));
+  let n = 1;
+  while (taken.has(`group_${n}`)) n += 1;
+  return `group_${n}`;
+}
+
+/**
+ * Bundle the given components into one new group. Returns null when the
+ * selection cannot form a group (fewer than two objects, unknown ids, or an
+ * object that already belongs to a different group).
+ */
+export function groupSelection(
+  spec: DocumentSpecification,
+  componentIds: string[],
+  name: string,
+): AssemblySpecification | null {
+  if (!isAssemblySpec(spec)) return null;
+  const ids = [...new Set(componentIds)];
+  if (ids.length < 2) return null;
+  const known = new Set(spec.components.map((c) => c.id));
+  if (ids.some((id) => !known.has(id))) return null;
+  const existing = groupsOf(spec);
+  if (ids.some((id) => groupForComponent(spec, id) !== null)) return null;
+  const group: AssemblyGroup = {
+    id: allocateGroupId(existing),
+    name: name.trim() || `Group ${existing.length + 1}`,
+    component_ids: ids,
+  };
+  return { ...withGroups(spec, [...existing, group]), schema_version: "4.1" };
+}
+
+/** Drop every group that overlaps the selection. */
+export function ungroupSelection(
+  spec: DocumentSpecification,
+  componentIds: string[],
+): AssemblySpecification | null {
+  if (!isAssemblySpec(spec)) return null;
+  const selected = new Set(componentIds);
+  const existing = groupsOf(spec);
+  const remaining = existing.filter(
+    (group) => !group.component_ids.some((id) => selected.has(id)),
+  );
+  if (remaining.length === existing.length) return null;
+  return withGroups(spec, remaining);
+}
+
+/** Pivot for a group/selection rotation: the centroid of its components. */
+export function selectionPivot(
+  spec: DocumentSpecification,
+  componentIds: string[],
+): Vec3 {
+  if (!isAssemblySpec(spec)) return [0, 0, 0];
+  const selected = new Set(componentIds);
+  const points = spec.components
+    .filter((component) => selected.has(component.id))
+    .map((component) => component.transform.position as Vec3);
+  return centroid(points);
+}
+
+/**
+ * Rotate the selected components about their shared pivot.
+ *
+ * Positions orbit the pivot and each component's own orientation picks up the
+ * same delta, so a group turns rigidly instead of every part spinning about
+ * its own centre. Explicit instance poses are rotated too — they are world
+ * poses, not offsets.
+ */
+export function rotateSelection(
+  spec: DocumentSpecification,
+  componentIds: string[],
+  delta: Vec3,
+): AssemblySpecification | null {
+  if (!isAssemblySpec(spec)) return null;
+  const selected = new Set(componentIds);
+  if (selected.size === 0) return null;
+  if (delta[0] === 0 && delta[1] === 0 && delta[2] === 0) return null;
+  const pivot = selectionPivot(spec, componentIds);
+  let changed = false;
+  const components = spec.components.map((component) => {
+    if (!selected.has(component.id)) return component;
+    changed = true;
+    const transform = rotatePose(
+      {
+        position: component.transform.position as Vec3,
+        rotation: component.transform.rotation as Vec3,
+      },
+      delta,
+      pivot,
+    );
+    const instances = component.instances.map((pose) =>
+      rotatePose(
+        { position: pose.position as Vec3, rotation: pose.rotation as Vec3 },
+        delta,
+        pivot,
+      ),
+    );
+    return {
+      ...component,
+      transform,
+      instances,
+    } as ComponentInstance;
+  });
+  if (!changed) return null;
+  return { ...spec, components };
+}
+
+/** Expand a selection to include every member of any group it touches. */
+export function expandSelectionToGroups(
+  spec: DocumentSpecification,
+  componentIds: string[],
+): string[] {
+  const ids = new Set(componentIds);
+  for (const id of componentIds) {
+    const group = groupForComponent(spec, id);
+    if (group) group.component_ids.forEach((member) => ids.add(member));
+  }
+  return [...ids];
+}
+
+/** Persist lock/unlock on the given components. */
+export function setSelectionLocked(
+  spec: DocumentSpecification,
+  componentIds: string[],
+  locked: boolean,
+): AssemblySpecification | null {
+  if (!isAssemblySpec(spec)) return null;
+  const selected = new Set(componentIds);
+  if (selected.size === 0) return null;
+  let changed = false;
+  const components = spec.components.map((component) => {
+    if (!selected.has(component.id) || Boolean(component.locked) === locked) {
+      return component;
+    }
+    changed = true;
+    return { ...component, locked };
+  });
+  if (!changed) return null;
+  return {
+    ...spec,
+    schema_version: spec.schema_version === "4.0" ? "4.1" : spec.schema_version,
+    components,
   };
 }
 
