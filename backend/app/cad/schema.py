@@ -1,13 +1,24 @@
-"""Versioned CAD specification schema (Milestone 6, extended in 3.2).
+"""Versioned CAD specification schema (Milestone 6, extended in 3.3).
 
 Contract boundary: Groq produces JSON -> this schema validates it ->
 CadQuery builds geometry. Anything outside this schema is rejected.
 
-Schema version: 3.2 (additive over 3.1; all v3.1 specifications remain valid)
+Schema version: 3.3 (additive over 3.2; all v3.2 specifications remain valid)
 
 Build operations in v3.0 (geometry construction):
   primitives : box, cylinder, cone, sphere, torus, polygon_prism
   composition: union (base + tool), cut (base - tool), intersect (base ∩ tool)
+
+v3.3 adds TWO profile operations, so turned and routed shapes no longer have to
+be approximated by stacking primitives:
+  revolve : a closed axial half-section [[radius, z], ...] revolved about the
+            Z axis by `angle` degrees (default 360). Pulleys, knobs, flanges,
+            cups, bells, tapered bosses.
+  sweep   : a circle of `radius` swept along a 3D polyline path [[x, y, z], ...]
+            (optionally closed). Pipes, handles, hooks, wire, frame tubes.
+Both operations build the solid and then translate it so its bounding-box
+center sits on the origin, matching the centered convention of every other
+primitive. The LLM still never positions parts inside a boolean tree.
 
 Feature node in v3.0 (deterministic engineering features on a solid):
   part {build, features[]} where features are applied in engine-fixed order:
@@ -45,7 +56,7 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-SPEC_VERSION = "3.2"
+SPEC_VERSION = "3.3"
 
 # Hard cap per dimension so the AI cannot request absurd geometry.
 MAX_DIMENSION_MM = 10_000.0
@@ -61,7 +72,20 @@ MAX_OPERATION_NODES = 15
 # Engineering features per part node (bounded composition, not unbounded trees).
 MAX_FEATURES = 4
 
+# Profile/path point counts: enough for a real section or routed pipe, small
+# enough that a single operation cannot smuggle in an unbounded polygon.
+MAX_PROFILE_POINTS = 32
+MAX_PATH_POINTS = 24
+
 Dim = Annotated[float, Field(gt=0, le=MAX_DIMENSION_MM)]
+
+# Profile and path coordinates may be negative (heights, world-ish positions),
+# but stay inside the same hard dimension cap.
+Coord = Annotated[float, Field(ge=-MAX_DIMENSION_MM, le=MAX_DIMENSION_MM)]
+
+# Revolve profiles live in the half-plane r >= 0: a point on the axis is legal,
+# a point across the axis is not (it would self-intersect on revolution).
+RadiusCoord = Annotated[float, Field(ge=0, le=MAX_DIMENSION_MM)]
 
 # Shorthand wall/edge sizes are still real geometry dimensions: keep the same
 # bounds so a shell/fillet/chamfer can never request absurd geometry.
@@ -153,6 +177,72 @@ class PolygonPrismOperation(BaseModel):
     sides: int = Field(ge=3, le=12)
     circumradius: Dim
     height: Dim
+
+
+class RevolveOperation(BaseModel):
+    """Closed axial half-section revolved about the Z axis.
+
+    `profile` is a list of [radius, z] points in mm, radius measured from the
+    Z axis. The polygon is closed automatically; the first and last points may
+    repeat. Points must stay at radius >= 0 (touching the axis is fine, but a
+    section that crosses it would sweep through itself and produce an invalid
+    solid). `angle` below 360 leaves a partial revolution starting at +X.
+    The built solid is translated so its bounding-box center is the origin.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["revolve"] = "revolve"
+    profile: list[tuple[RadiusCoord, Coord]] = Field(
+        min_length=3, max_length=MAX_PROFILE_POINTS
+    )
+    angle: float = Field(default=360.0, gt=0, le=360.0)
+
+    @model_validator(mode="after")
+    def profile_must_be_a_real_section(self) -> "RevolveOperation":
+        points = [(float(r), float(z)) for r, z in self.profile]
+        if max(r for r, _ in points) <= 0:
+            raise ValueError("revolve profile needs at least one point off the axis")
+        area = 0.0
+        for (r1, z1), (r2, z2) in zip(points, points[1:] + points[:1]):
+            area += r1 * z2 - r2 * z1
+        if abs(area) / 2 <= 1e-6:
+            raise ValueError(
+                "revolve profile encloses no area (all points are collinear)"
+            )
+        return self
+
+
+class SweepOperation(BaseModel):
+    """Circle of `radius` swept along a 3D polyline path.
+
+    `path` is 2-24 [x, y, z] points in mm. Corners are rounded by the engine
+    (round transition), so a 90° bend becomes a smooth elbow instead of a
+    mitre. `closed` joins the last point back to the first to make a loop
+    (requires at least 3 distinct points). The swept solid is translated so
+    its bounding-box center is the origin.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["sweep"] = "sweep"
+    radius: Dim
+    path: list[tuple[Coord, Coord, Coord]] = Field(
+        min_length=2, max_length=MAX_PATH_POINTS
+    )
+    closed: bool = False
+
+    @model_validator(mode="after")
+    def path_must_have_real_segments(self) -> "SweepOperation":
+        points = [(float(x), float(y), float(z)) for x, y, z in self.path]
+        for (x1, y1, z1), (x2, y2, z2) in zip(points, points[1:]):
+            if abs(x1 - x2) + abs(y1 - y2) + abs(z1 - z2) <= 1e-3:
+                raise ValueError("sweep path has two identical consecutive points")
+        if self.closed:
+            distinct = set(points)
+            if len(distinct) < 3:
+                raise ValueError("closed sweep path needs at least 3 distinct points")
+        return self
 
 
 # --- Build operations: composition -------------------------------------------
@@ -380,6 +470,8 @@ Operation = Annotated[
         SphereOperation,
         TorusOperation,
         PolygonPrismOperation,
+        RevolveOperation,
+        SweepOperation,
         UnionOperation,
         CutOperation,
         IntersectOperation,
@@ -399,6 +491,8 @@ BuildOperation = Annotated[
         SphereOperation,
         TorusOperation,
         PolygonPrismOperation,
+        RevolveOperation,
+        SweepOperation,
         UnionOperation,
         CutOperation,
         IntersectOperation,
@@ -408,7 +502,7 @@ BuildOperation = Annotated[
 
 
 class CADSpec(BaseModel):
-    """Top-level validated CAD specification, schema v3.2."""
+    """Top-level validated CAD specification, schema v3.3."""
 
     model_config = ConfigDict(extra="forbid")
 

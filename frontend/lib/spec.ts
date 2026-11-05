@@ -14,6 +14,8 @@ export const OPERATION_LABELS: Record<OperationType, string> = {
   sphere: "Sphere",
   torus: "Torus",
   polygon_prism: "Polygon Prism",
+  revolve: "Revolve",
+  sweep: "Sweep",
   union: "Union",
   cut: "Cut",
   intersect: "Intersect",
@@ -83,6 +85,10 @@ export function summarizePrimitive(op: CadOperation): string {
       return `Torus · ⌀${formatMm(op.major_radius * 2)} ring × ⌀${formatMm(op.minor_radius * 2)} tube mm`;
     case "polygon_prism":
       return `Prism · ${op.sides}-gon · ⌀${formatMm(op.circumradius * 2)} across corners × ${formatMm(op.height)} mm`;
+    case "revolve":
+      return `Revolve · ${op.profile.length}-point section · ${formatMm(op.angle)}°`;
+    case "sweep":
+      return `Sweep · ⌀${formatMm(op.radius * 2)} × ${op.path.length}-point path${op.closed ? " closed" : ""}`;
     case "union":
     case "cut":
     case "intersect":
@@ -166,6 +172,36 @@ export function summarizeDimensions(op: CadOperation): DimensionRow[] {
         { label: "Across corners", value: `${formatMm(op.circumradius * 2)} mm` },
         { label: "Height", value: `${formatMm(op.height)} mm` },
       ];
+    case "revolve": {
+      const radii = op.profile.map(([r]) => r);
+      const heights = op.profile.map(([, z]) => z);
+      return [
+        { label: "Section points", value: String(op.profile.length) },
+        { label: "Angle", value: `${formatMm(op.angle)}°` },
+        { label: "Outer diameter", value: `${formatMm(Math.max(...radii) * 2)} mm` },
+        {
+          label: "Height",
+          value: `${formatMm(Math.max(...heights) - Math.min(...heights))} mm`,
+        },
+      ];
+    }
+    case "sweep": {
+      const length = op.path.reduce((total, point, index) => {
+        if (index === 0) return total;
+        const prev = op.path[index - 1];
+        return total + Math.hypot(
+          point[0] - prev[0],
+          point[1] - prev[1],
+          point[2] - prev[2],
+        );
+      }, 0);
+      return [
+        { label: "Wire diameter", value: `${formatMm(op.radius * 2)} mm` },
+        { label: "Path points", value: String(op.path.length) },
+        { label: "Path length", value: `${formatMm(length)} mm` },
+        { label: "Closed", value: op.closed ? "Yes" : "No" },
+      ];
+    }
     case "union":
     case "cut":
     case "intersect":

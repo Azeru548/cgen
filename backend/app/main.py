@@ -8,6 +8,8 @@ Milestone 6: + schema v3.0 (torus, polygon_prism, intersect, part features:
   Schema v3.1 adds the hole_pattern feature (bolt-circle holes); contracts unchanged.
   Schema v3.2 adds the hole_grid feature (rectangular/linear hole arrays);
   contracts unchanged.
+  Schema v3.3 adds the revolve and sweep build operations (turned sections and
+  swept tubes); contracts unchanged.
 Milestone 7: + POST /modify (natural-language modification of existing specs
   with structural diff guard).
 
@@ -142,7 +144,7 @@ class GenerateResponse(BaseModel):
     status: Literal["completed"] = Field(description="Always 'completed' on success.")
     request_id: str = Field(description="Random ID for this request; see server logs.")
     specification: dict = Field(
-        description="Validated CAD specification (schema v3.2 part or v4.0 assembly)."
+        description="Validated CAD specification (schema v3.3 part or v4.0 assembly)."
     )
     units: str = Field(description="Length unit used throughout: mm.")
     generation_time_ms: int = Field(description="Total backend generation time.")

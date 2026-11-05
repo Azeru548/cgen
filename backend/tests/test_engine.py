@@ -840,3 +840,164 @@ def test_grid_export():
     assert result["operation"] == "part"
     assert result["step_bytes"] > 0
     assert result["stl_bytes"] > 0
+
+
+# --- Schema v3.3: revolve and sweep -------------------------------------------
+
+
+def test_make_revolve_ring_volume_and_centering():
+    need_cq()
+    solid = cadquery_engine.make_revolve([[10, 0], [20, 0], [20, 5], [10, 5]])
+    assert solid.Volume() == pytest.approx(math.pi * (20**2 - 10**2) * 5, rel=1e-6)
+    bbox = solid.BoundingBox()
+    assert bbox.xlen == pytest.approx(40.0, abs=1e-6)
+    assert bbox.zmin == pytest.approx(-2.5, abs=1e-6)
+    assert bbox.zmax == pytest.approx(2.5, abs=1e-6)
+
+
+def test_make_revolve_partial_angle_is_proportional():
+    need_cq()
+    profile = [[6, -4], [12, -4], [12, 4], [6, 4]]
+    full = cadquery_engine.make_revolve(profile, 360)
+    half = cadquery_engine.make_revolve(profile, 180)
+    assert half.Volume() == pytest.approx(full.Volume() / 2, rel=1e-6)
+    assert half.isValid()
+
+
+def test_make_revolve_profile_touching_the_axis():
+    need_cq()
+    # A cone-like solid: the section starts on the axis.
+    solid = cadquery_engine.make_revolve([[0, -5], [10, -5], [0, 5]])
+    assert solid.isValid()
+    assert solid.Volume() == pytest.approx(math.pi * 10**2 * 10 / 3, rel=1e-6)
+
+
+def test_make_revolve_rejects_bad_sections():
+    need_cq()
+    with pytest.raises(ValueError):
+        cadquery_engine.make_revolve([[0, 0], [5, 0]])  # too few points
+    with pytest.raises(ValueError):
+        cadquery_engine.make_revolve([[10, 0], [-5, 0], [-5, 5]])  # crosses axis
+    with pytest.raises(ValueError):
+        cadquery_engine.make_revolve([[0, 0], [5, 0], [5, 5]], 0)  # bad angle
+
+
+def test_make_sweep_straight_is_a_tube():
+    need_cq()
+    solid = cadquery_engine.make_sweep(4, [[0, 0, 0], [60, 0, 0]])
+    assert solid.Volume() == pytest.approx(math.pi * 4**2 * 60, rel=1e-6)
+    bbox = solid.BoundingBox()
+    assert bbox.xlen == pytest.approx(60.0, abs=1e-6)
+    assert bbox.ylen == pytest.approx(8.0, abs=1e-6)
+    assert bbox.zlen == pytest.approx(8.0, abs=1e-6)
+
+
+def test_make_sweep_bend_and_closed_loop_are_single_valid_solids():
+    need_cq()
+    bend = cadquery_engine.make_sweep(4, [[0, 0, 0], [50, 0, 0], [50, 0, 50]])
+    assert bend.isValid()
+    assert len(bend.Solids()) == 1
+    # Two 50 mm runs: a round elbow keeps nearly the full tube volume.
+    straight = math.pi * 4**2 * 100
+    assert straight * 0.9 < bend.Volume() < straight
+
+    loop = cadquery_engine.make_sweep(
+        3, [[0, 0, 0], [40, 0, 0], [40, 0, 40], [0, 0, 40]], closed=True
+    )
+    assert loop.isValid()
+    assert len(loop.Solids()) == 1
+    bbox = loop.BoundingBox()
+    assert bbox.xlen == pytest.approx(46.0, abs=0.5)
+
+
+def test_make_sweep_3d_path_stays_valid():
+    need_cq()
+    solid = cadquery_engine.make_sweep(
+        3, [[0, 0, 0], [20, 0, 0], [20, 20, 10], [40, 20, 30]]
+    )
+    assert solid.isValid()
+    assert len(solid.Solids()) == 1
+
+
+def test_make_sweep_rejects_bad_paths():
+    need_cq()
+    with pytest.raises(ValueError):
+        cadquery_engine.make_sweep(0, [[0, 0, 0], [10, 0, 0]])
+    # Repeated points collapse, so fewer than 2 distinct points is the error.
+    with pytest.raises(ValueError):
+        cadquery_engine.make_sweep(2, [[0, 0, 0], [0, 0, 0]])
+    with pytest.raises(ValueError):
+        cadquery_engine.make_sweep(2, [[0, 0, 0], [10, 0, 0]], closed=True)
+    # A repeated first/last point is the normal way to close a loop: allowed.
+    looped = cadquery_engine.make_sweep(
+        2, [[0, 0, 0], [20, 0, 0], [20, 0, 20], [0, 0, 20], [0, 0, 0]]
+    )
+    assert looped.isValid()
+
+
+def test_profile_operations_work_inside_a_part_and_a_union():
+    need_cq()
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "bushing",
+            "operation": {
+                "type": "part",
+                "build": {
+                    "type": "revolve",
+                    "profile": [[0, -8], [12, -8], [12, 8], [0, 8]],
+                },
+                "features": [{"type": "hole", "diameter": 8, "through": True}],
+            },
+        }
+    )
+    solid = cadquery_engine.build_operation(spec.operation)
+    expected = math.pi * 12**2 * 16 - math.pi * 4**2 * 16
+    assert solid.Volume() == pytest.approx(expected, rel=1e-6)
+    assert solid.isValid()
+
+    union_spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "piped_block",
+            "operation": {
+                "type": "union",
+                "base": {"type": "box", "width": 20, "depth": 20, "height": 20},
+                "tool": {
+                    "type": "sweep",
+                    "radius": 3,
+                    "path": [[0, 0, 0], [30, 0, 0]],
+                },
+            },
+        }
+    )
+    combined = cadquery_engine.build_operation(union_spec.operation)
+    assert combined.isValid()
+    assert len(combined.Solids()) == 1
+
+
+def test_export_operation_revolve_and_sweep():
+    need_cq()
+    for operation, name in (
+        (
+            {"type": "revolve", "profile": [[6, -8], [12, -8], [12, 8], [6, 8]]},
+            "bushing",
+        ),
+        (
+            {"type": "sweep", "radius": 4, "path": [[0, 0, 0], [40, 0, 40]]},
+            "bent_pipe",
+        ),
+    ):
+        spec = CADSpec.model_validate(
+            {
+                "document_type": "3d_part",
+                "units": "mm",
+                "name": name,
+                "operation": operation,
+            }
+        )
+        result = cadquery_engine.export_operation(spec.operation, name=spec.name)
+        assert result["step_bytes"] > 0
+        assert result["stl_bytes"] > 0

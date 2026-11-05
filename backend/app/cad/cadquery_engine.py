@@ -13,6 +13,10 @@ Geometry conventions (all units millimeters, origin at world 0,0,0):
   sphere        : `radius` about the origin.
   torus         : ring torus, axis +Z, centered on the origin.
   polygon_prism : regular n-gon prism, axis +Z, centered on the origin.
+  revolve       : closed (radius, z) half-section revolved about Z by `angle`,
+                  then centered on its bounding-box center.
+  sweep         : circle of `radius` swept along a 3D polyline with rounded
+                  corners, then centered on its bounding-box center.
   union         : result = base + tool (boolean fuse).
   cut           : result = base - tool (boolean subtraction).
   intersect     : result = base ∩ tool (empty result is rejected).
@@ -67,8 +71,10 @@ from .schema import (
     IntersectOperation,
     PartOperation,
     PolygonPrismOperation,
+    RevolveOperation,
     ShellFeature,
     SphereOperation,
+    SweepOperation,
     TorusOperation,
     UnionOperation,
 )
@@ -205,6 +211,97 @@ def make_polygon_prism(sides: int, circumradius: float, height: float):
         raise ValueError("Polygon prism dimensions must be positive")
     solid = cq.Workplane("XY").polygon(sides, 2 * circumradius).extrude(height).val()
     return solid.translate(cq.Vector(0, 0, -height / 2))
+
+
+def _center_on_origin(shape):
+    """Translate a solid so its bounding-box center is the world origin.
+
+    Every other primitive is built centered, so the profile operations must
+    land centered too: a revolve or sweep is authored in absolute-ish
+    coordinates, and recentering keeps boolean placement deterministic.
+    """
+    cq = _require_cq()
+    center = shape.BoundingBox().center
+    if abs(center.x) < 1e-9 and abs(center.y) < 1e-9 and abs(center.z) < 1e-9:
+        return shape
+    return shape.translate(cq.Vector(-center.x, -center.y, -center.z))
+
+
+def _profile_points(points):
+    """Coerce and clean a profile/path point list, dropping repeats.
+
+    A repeated first/last point is the normal way to "close" a polygon; the
+    closed wire is written explicitly, so duplicates are redundant and OCC
+    rejects zero-length edges.
+    """
+    cleaned = []
+    for point in points:
+        values = tuple(float(v) for v in point)
+        if cleaned and all(abs(a - b) < 1e-9 for a, b in zip(values, cleaned[-1])):
+            continue
+        cleaned.append(values)
+    return cleaned
+
+
+def make_revolve(profile, angle: float = 360.0):
+    """Revolve a closed (radius, z) section around the Z axis, centered.
+
+    The profile is the axial half-section: first value is the distance from
+    the Z axis, second is the height along it. Negative height and points on
+    the axis are legal; a section that crosses the axis is rejected (it would
+    sweep through itself).
+    """
+    cq = _require_cq()
+    if not 0 < float(angle) <= 360:
+        raise ValueError("revolve angle must be greater than 0 and at most 360")
+    points = _profile_points(profile)
+    if len(points) < 3:
+        raise ValueError("revolve profile needs at least 3 distinct points")
+    if min(p[0] for p in points) < 0:
+        raise ValueError("revolve profile has a negative radius")
+    wp = cq.Workplane("XZ").moveTo(points[0][0], points[0][1])
+    for radius, height in points[1:]:
+        wp = wp.lineTo(radius, height)
+    # XZ workplane: local x -> world X (radius), local y -> world Z (height),
+    # and the local (0, 1) axis is world +Z, so this revolves about Z.
+    solid = wp.close().revolve(float(angle), (0, 0, 0), (0, 1, 0)).val()
+    return _center_on_origin(solid)
+
+
+def make_sweep(radius: float, path, closed: bool = False):
+    """Sweep a circular profile along a 3D polyline path, centered.
+
+    The profile is placed at the first path point, perpendicular to the first
+    segment, then swept with a round transition so corners become elbows
+    instead of mitres. `closed` joins the last point back to the first for a
+    loop (a repeated first/last point is accepted either way).
+    """
+    cq = _require_cq()
+    if radius <= 0:
+        raise ValueError("sweep radius must be positive")
+    points = _profile_points(path)
+    if len(points) < 2:
+        raise ValueError("sweep path needs at least 2 distinct points")
+    vectors = [cq.Vector(*p) for p in points]
+    if closed:
+        if len(points) < 3:
+            raise ValueError("closed sweep path needs at least 3 distinct points")
+        vectors = vectors + [vectors[0]]
+    direction = (vectors[1] - vectors[0]).normalized()
+    # Any perpendicular picks the profile's start orientation; the tube is
+    # rotationally symmetric, so the choice only affects the seam.
+    helper = cq.Vector(0, 0, 1) if abs(direction.z) < 0.9 else cq.Vector(1, 0, 0)
+    plane = cq.Plane(
+        origin=vectors[0], xDir=direction.cross(helper).normalized(), normal=direction
+    )
+    wire = cq.Wire.makePolygon(vectors)
+    solid = (
+        cq.Workplane(plane)
+        .circle(radius)
+        .sweep(wire, isFrenet=True, transition="round")
+        .val()
+    )
+    return _center_on_origin(solid)
 
 
 def as_shape(obj):
@@ -632,6 +729,10 @@ def build_operation(op):
         return make_torus(op.major_radius, op.minor_radius)
     if isinstance(op, PolygonPrismOperation):
         return make_polygon_prism(op.sides, op.circumradius, op.height)
+    if isinstance(op, RevolveOperation):
+        return make_revolve(op.profile, op.angle)
+    if isinstance(op, SweepOperation):
+        return make_sweep(op.radius, op.path, op.closed)
     if isinstance(op, UnionOperation):
         return union(build_operation(op.base), build_operation(op.tool))
     if isinstance(op, CutOperation):

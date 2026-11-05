@@ -9,7 +9,7 @@ a revision in a Project → Workspace → Revision history.
 
 ```text
 User prompt
-  → Groq JSON only (3d_part v3.2 or 3d_assembly v4.0; never executable code)
+  → Groq JSON only (3d_part v3.3 or 3d_assembly v4.0; never executable code)
   → Pydantic validation (allowlisted ops / registry component types)
   → CadQuery (deterministic geometry, no AI code execution)
   → STEP/STL (+ per-component files for assemblies)
@@ -65,7 +65,7 @@ requires a rebuild.
 attaches the signed-in user's Firebase ID token automatically. See
 [`SECURITY.md`](SECURITY.md) before exposing the API publicly.
 
-## Supported operations (schema v3.2)
+## Supported operations (schema v3.3)
 
 ```text
 box           {width, depth, height}
@@ -74,6 +74,10 @@ cone          {bottom_radius, top_radius, height}
 sphere        {radius}
 torus         {major_radius, minor_radius}          minor < major
 polygon_prism {sides (3-12), circumradius, height}
+revolve       {profile [[radius, z], ...] 3-32, angle? <= 360}
+              closed axial section turned about +Z (turned parts)
+sweep         {radius, path [[x, y, z], ...] 2-24, closed?}
+              round wire swept along a 3D polyline, corners rounded
 union         {base, tool}   result = base + tool
 cut           {base, tool}   result = base - tool
 intersect     {base, tool}   result = base ∩ tool (must overlap)
@@ -203,7 +207,7 @@ backend/
 ├── app/
 │   ├── main.py               # routes + HTTP mapping + OpenAPI models
 │   ├── ai/groq_client.py     # Groq: JSON-only spec + modify prompt, safe error mapping
-│   ├── cad/schema.py         # CADSpec v3.2 (Pydantic, strict)
+│   ├── cad/schema.py         # CADSpec v3.3 (Pydantic, strict)
 │   ├── cad/cadquery_engine.py# deterministic geometry + export validation
 │   └── services/
 │       ├── generation.py     # generate + modify orchestration, diff guard

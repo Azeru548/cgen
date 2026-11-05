@@ -28,7 +28,7 @@ Single-page web workstation: one top bar (logo, model library, Workspace, Clear 
 
 ## Capabilities and Constraints
 
-- Generate and modify single parts (schema v3.2) or assemblies (schema v4.0) from natural language
+- Generate and modify single parts (schema v3.3 — primitives, booleans, revolved sections, swept tubes, engineering features) or assemblies (schema v4.0) from natural language
 - Deterministic component library (~72 types: geometry, fasteners, mechanical, electronics, robotics, templates — including involute gears, GT2 pulleys, T-slot extrusion, springs, flanges, fans and printed-part helpers)
 - Add / remove / update / hide objects without calling the LLM
 - Multi-object scene: selection, per-object parameters, placement, visibility

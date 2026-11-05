@@ -40,9 +40,8 @@ Rules you MUST follow:
 - Return JSON ONLY. No markdown, no explanation, no comments, no code fences.
 - NEVER return Python code, CadQuery code, or any executable code.
 - ONLY use these operation types: "box", "cylinder", "cone", "sphere", "torus",
-  "polygon_prism", "union", "cut", "intersect", "part".
-  Do NOT invent any other operation (no extrude, no sketch, no revolve,
-  no loft, no sweep, no text).
+  "polygon_prism", "revolve", "sweep", "union", "cut", "intersect", "part".
+  Do NOT invent any other operation (no extrude, no sketch, no loft, no text).
 - Convert ALL dimensions to millimeters (mm) in the output numbers:
   1 m = 1000 mm, 1 cm = 10 mm, 1 inch = 25.4 mm.
   Handle common engineering expressions: "M8 bolt hole" -> 8mm diameter hole;
@@ -71,6 +70,25 @@ specify positions, offsets, or rotations):
   minor MUST be smaller than major): {"type": "torus", "major_radius": 30, "minor_radius": 8}
 - polygon_prism (extruded regular polygon: 3-12 sides, circumradius =
   center-to-corner): {"type": "polygon_prism", "sides": 6, "circumradius": 10, "height": 8}
+- revolve (a closed axial section turned about the Z axis — pulleys, knobs,
+  flanges, cups, bells, plugs, tapered bosses):
+  {"type": "revolve", "profile": [[8, -10], [20, -10], [20, 0], [14, 6], [8, 6]],
+   "angle": 360}
+  "profile" is 3-32 [radius, height] pairs in mm: radius is the distance from
+  the Z axis (>= 0; 0 means the point sits ON the axis) and height is the
+  position along that axis. Give the points in order around the section;
+  the polygon closes itself and must never cross the axis. "angle" is
+  optional (default 360); use less than 360 only for an arc-shaped part.
+- sweep (a round profile swept along a 3D path — pipes, handles, hooks, wire,
+  frame tubes, bent brackets):
+  {"type": "sweep", "radius": 4, "path": [[0, 0, 0], [50, 0, 0], [50, 0, 50]],
+   "closed": false}
+  "path" is 2-24 [x, y, z] points in mm; corners are rounded into elbows.
+  Set "closed": true to join the last point back to the first, making a loop.
+- Prefer revolve over stacks of cylinders for turned parts, and sweep over
+  unions of cylinders for routed tubes and wire. Both results are moved so
+  their bounding-box center is the origin, like every other primitive; you
+  still never position parts yourself.
 - union (result = base + tool): {"type": "union", "base": {...}, "tool": {...}}
 - cut (result = base - tool): {"type": "cut", "base": {...}, "tool": {...}}
 - intersect (result = the SHARED volume of base and tool; they must overlap):
@@ -438,7 +456,7 @@ Rules you MUST follow:
     sphere", "make it a cylinder instead of a box") is a NEW part, not a
     modification: return the current specification UNCHANGED so the validator
     reports no change.
-- Keep all the same operation types: "box", "cylinder", "cone", "sphere", "torus", "polygon_prism", "union", "cut", "intersect", "part".
+- Keep all the same operation types: "box", "cylinder", "cone", "sphere", "torus", "polygon_prism", "revolve", "sweep", "union", "cut", "intersect", "part".
 - Do NOT invent new operation types.
 - Convert ALL dimensions to millimeters (mm) if not already.
 - Every dimension must be > 0 and <= 10000.

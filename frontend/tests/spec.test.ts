@@ -53,6 +53,32 @@ describe("operationLabel", () => {
       ],
       [
         {
+          type: "revolve",
+          profile: [
+            [6, -8],
+            [12, -8],
+            [12, 8],
+            [6, 8],
+          ],
+          angle: 360,
+        },
+        "Revolve",
+      ],
+      [
+        {
+          type: "sweep",
+          radius: 4,
+          path: [
+            [0, 0, 0],
+            [50, 0, 0],
+            [50, 0, 50],
+          ],
+          closed: false,
+        },
+        "Sweep",
+      ],
+      [
+        {
           type: "part",
           build: { type: "box", width: 100, depth: 60, height: 10 },
           features: [{ type: "hole", diameter: 8, through: true, depth: null }],
@@ -168,6 +194,66 @@ describe("summarizeDimensions", () => {
       { label: "Height", value: "8 mm" },
     ]
     );
+  });
+
+  it("describes a revolve section by outer diameter, height and angle", () => {
+    const rows = summarizeDimensions({
+      type: "revolve",
+      profile: [
+        [6, -8],
+        [12, -8],
+        [12, 8],
+        [6, 8],
+      ],
+      angle: 270,
+    });
+    expect(rows).toEqual([
+      { label: "Section points", value: "4" },
+      { label: "Angle", value: "270°" },
+      { label: "Outer diameter", value: "24 mm" },
+      { label: "Height", value: "16 mm" },
+    ]);
+    expect(
+      summarizePrimitive({
+        type: "revolve",
+        profile: [
+          [0, 0],
+          [10, 0],
+          [10, 4],
+        ],
+        angle: 360,
+      }),
+    ).toBe("Revolve · 3-point section · 360°");
+  });
+
+  it("measures a sweep path length and reports the wire diameter", () => {
+    const rows = summarizeDimensions({
+      type: "sweep",
+      radius: 4,
+      path: [
+        [0, 0, 0],
+        [50, 0, 0],
+        [50, 0, 50],
+      ],
+      closed: true,
+    });
+    expect(rows).toEqual([
+      { label: "Wire diameter", value: "8 mm" },
+      { label: "Path points", value: "3" },
+      { label: "Path length", value: "100 mm" },
+      { label: "Closed", value: "Yes" },
+    ]);
+    expect(
+      summarizePrimitive({
+        type: "sweep",
+        radius: 2,
+        path: [
+          [0, 0, 0],
+          [10, 0, 0],
+        ],
+        closed: false,
+      }),
+    ).toBe("Sweep · ⌀4 × 2-point path");
   });
 
   it("lists the part build plus features in engine order", () => {

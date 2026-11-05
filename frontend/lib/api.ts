@@ -167,6 +167,8 @@ function isValidOperationType(value: unknown): boolean {
     value === "sphere" ||
     value === "torus" ||
     value === "polygon_prism" ||
+    value === "revolve" ||
+    value === "sweep" ||
     value === "union" ||
     value === "cut" ||
     value === "intersect" ||

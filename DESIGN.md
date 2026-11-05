@@ -74,7 +74,7 @@ Nameplates, revision items (active = signal border, no side-stripe), model libra
 - **Assembly tree** lists named objects; selection is shared with the viewport (signal border). Eye toggle is a preview; **Apply placement** commits visibility, name, and transform as one revision.
 - **Object inspector** shows name, XYZ mm / Euler degrees, and registry parameters. Dirty values raise a red cage tick; **Apply** settles the tick. Neither writes a revision until the explicit button.
 - **Viewer** renders each component’s local STL at its transform. Repeated fasteners share one definition and N instance poses. Camera still frames on first load, reset, or a large size change only.
-- **Single-part** documents (schema 3.2) still occupy the scene as one generated object so the tree stays available.
+- **Single-part** documents (schema 3.3) still occupy the scene as one generated object so the tree stays available.
 
 ## Accessibility
 

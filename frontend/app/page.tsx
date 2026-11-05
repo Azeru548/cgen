@@ -47,6 +47,8 @@ const OPERATIONS = [
   { type: "sphere", meta: "radius" },
   { type: "torus", meta: "major_r · minor_r" },
   { type: "polygon_prism", meta: "sides · circumradius" },
+  { type: "revolve", meta: "axial section · angle" },
+  { type: "sweep", meta: "wire radius · 3D path" },
   { type: "union", meta: "base + tool" },
   { type: "cut", meta: "base − tool" },
   { type: "intersect", meta: "base ∩ tool" },
@@ -63,11 +65,12 @@ const FEATURES = [
 ];
 
 const LIBRARY = [
-  ["Geometry", "07", "plates, extrusions, profiles"],
-  ["Fasteners", "05", "M3 screws, nuts, standoffs"],
-  ["Mechanical", "05", "servo, bearing, shaft, bracket"],
-  ["Electronics", "05", "Uno, ESP32, breadboard, driver"],
-  ["Templates", "03", "enclosure shells and chassis"],
+  ["Geometry", "06", "plates, extrusions, profiles"],
+  ["Fasteners", "17", "screws, nuts, washers, inserts"],
+  ["Mechanical", "13", "gears, pulleys, extrusion, springs"],
+  ["Electronics", "16", "boards, fans, headers, holders"],
+  ["Robotics", "11", "servos, rails, hubs, casters"],
+  ["Templates", "09", "enclosures and printed helpers"],
 ];
 
 const LEDGER = [
@@ -183,6 +186,21 @@ function OpGlyph({ type }: { type: string }) {
         <g {...line}>
           <path d="M24 7 39 15v18L24 41 9 33V15z" />
           <path d="M9 15 24 23l15-8M24 23v18" opacity=".55" />
+        </g>
+      )}
+      {type === "revolve" && (
+        <g {...line}>
+          <path d="M24 6v36" opacity=".4" strokeDasharray="3 3" />
+          <ellipse cx="24" cy="13" rx="13" ry="5" />
+          <ellipse cx="24" cy="35" rx="9" ry="3.5" />
+          <path d="M11 13v22M37 13v22" />
+        </g>
+      )}
+      {type === "sweep" && (
+        <g {...line}>
+          <path d="M9 36h14a8 8 0 0 0 8-8V15" />
+          <path d="M9 41h14a13 13 0 0 0 13-13V15" opacity=".55" />
+          <circle cx="31" cy="12" r="3.5" />
         </g>
       )}
       {type === "union" && (

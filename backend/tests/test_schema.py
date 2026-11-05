@@ -831,3 +831,134 @@ def test_plate_central_hole_plus_grid_within_cap():
     )
     assert len(spec.operation.features) == 2
     assert feature_summary(spec.operation) == ["hole", "hole_grid"]
+
+
+# --- Schema v3.3: revolve and sweep -------------------------------------------
+
+
+def test_valid_revolve():
+    spec = CADSpec.model_validate(
+        valid_payload(
+            name="bushing",
+            operation={
+                "type": "revolve",
+                "profile": [[6, -8], [12, -8], [12, 8], [6, 8]],
+            },
+        )
+    )
+    assert spec.operation.type == "revolve"
+    assert spec.operation.angle == 360.0
+    assert len(spec.operation.profile) == 4
+
+
+def test_revolve_accepts_partial_angle_and_axis_points():
+    spec = CADSpec.model_validate(
+        valid_payload(
+            operation={
+                "type": "revolve",
+                "angle": 180,
+                "profile": [[0, 0], [10, 0], [10, 4], [0, 6]],
+            },
+        )
+    )
+    assert spec.operation.type == "revolve"
+    assert spec.operation.angle == 180.0
+    assert spec.operation.profile[0] == (0.0, 0.0)
+
+
+def test_revolve_rejects_bad_profiles():
+    bad_operations = [
+        # all points collinear: encloses no area
+        {"type": "revolve", "profile": [[0, 0], [5, 0], [10, 0]]},
+        # crosses the axis (negative radius)
+        {"type": "revolve", "profile": [[-2, 0], [5, 0], [5, 5]]},
+        # every point on the axis
+        {"type": "revolve", "profile": [[0, 0], [0, 5], [0, 10]]},
+        # too few points
+        {"type": "revolve", "profile": [[0, 0], [5, 5]]},
+        # angle out of range
+        {"type": "revolve", "profile": [[0, 0], [5, 0], [5, 5]], "angle": 0},
+        {"type": "revolve", "profile": [[0, 0], [5, 0], [5, 5]], "angle": 361},
+        # unknown field
+        {"type": "revolve", "profile": [[0, 0], [5, 0], [5, 5]], "sides": 6},
+    ]
+    for operation in bad_operations:
+        with pytest.raises(ValidationError):
+            CADSpec.model_validate(valid_payload(operation=operation))
+
+
+def test_revolve_profile_point_cap_enforced():
+    profile = [[1, i] for i in range(schema.MAX_PROFILE_POINTS + 1)]
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            valid_payload(operation={"type": "revolve", "profile": profile})
+        )
+
+
+def test_valid_sweep():
+    spec = CADSpec.model_validate(
+        valid_payload(
+            name="handle",
+            operation={
+                "type": "sweep",
+                "radius": 4,
+                "path": [[0, 0, 0], [50, 0, 0], [50, 0, 50]],
+            },
+        )
+    )
+    assert spec.operation.type == "sweep"
+    assert spec.operation.radius == 4
+    assert spec.operation.closed is False
+    assert len(spec.operation.path) == 3
+
+
+def test_sweep_accepts_closed_loop():
+    spec = CADSpec.model_validate(
+        valid_payload(
+            operation={
+                "type": "sweep",
+                "radius": 3,
+                "closed": True,
+                "path": [[0, 0, 0], [40, 0, 0], [40, 0, 40], [0, 0, 40]],
+            },
+        )
+    )
+    assert spec.operation.closed is True
+
+
+def test_sweep_rejects_bad_paths():
+    bad_operations = [
+        # duplicated consecutive point
+        {"type": "sweep", "radius": 3, "path": [[0, 0, 0], [0, 0, 0], [10, 0, 0]]},
+        # single point
+        {"type": "sweep", "radius": 3, "path": [[0, 0, 0]]},
+        # zero radius
+        {"type": "sweep", "radius": 0, "path": [[0, 0, 0], [10, 0, 0]]},
+        # closed loop needs at least 3 distinct points
+        {"type": "sweep", "radius": 3, "closed": True, "path": [[0, 0, 0], [10, 0, 0]]},
+        # unknown field
+        {"type": "sweep", "radius": 3, "path": [[0, 0, 0], [10, 0, 0]], "angle": 90},
+    ]
+    for operation in bad_operations:
+        with pytest.raises(ValidationError):
+            CADSpec.model_validate(valid_payload(operation=operation))
+
+
+def test_sweep_path_point_cap_enforced():
+    path = [[float(i), 0, 0] for i in range(schema.MAX_PATH_POINTS + 1)]
+    with pytest.raises(ValidationError):
+        CADSpec.model_validate(
+            valid_payload(operation={"type": "sweep", "radius": 2, "path": path})
+        )
+
+
+def test_profile_operations_count_as_single_nodes():
+    revolve = schema.RevolveOperation.model_validate(
+        {"type": "revolve", "profile": [[0, 0], [5, 0], [5, 5]]}
+    )
+    sweep = schema.SweepOperation.model_validate(
+        {"type": "sweep", "radius": 2, "path": [[0, 0, 0], [10, 0, 0]]}
+    )
+    for op in (revolve, sweep):
+        assert operation_depth(op) == 1
+        assert operation_node_count(op) == 1

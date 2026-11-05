@@ -221,8 +221,15 @@ describe("generatePart", () => {
     ).not.toThrow();
   });
 
-  it("accepts M6 operation types at the contract boundary", () => {
-    for (const type of ["torus", "polygon_prism", "intersect", "part"]) {
+  it("accepts every schema operation type at the contract boundary", () => {
+    for (const type of [
+      "torus",
+      "polygon_prism",
+      "revolve",
+      "sweep",
+      "intersect",
+      "part",
+    ]) {
       expect(() =>
         parseGenerateResponse({
           ...SHAFT_RESPONSE,
@@ -233,7 +240,7 @@ describe("generatePart", () => {
         }),
       ).not.toThrow();
     }
-    for (const type of ["extrude", "revolve", "loft"]) {
+    for (const type of ["extrude", "loft", "sketch", "fillet"]) {
       expect(() =>
         parseGenerateResponse({
           ...SHAFT_RESPONSE,

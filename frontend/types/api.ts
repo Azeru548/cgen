@@ -1,4 +1,4 @@
-/** Strict TypeScript mirrors of the cgen backend contract (schema v3.2).
+/** Strict TypeScript mirrors of the cgen backend contract (schema v3.3).
  *  The frontend never reconstructs CAD geometry from these types —
  *  the specification is display/debug information only.
  *  No `any` anywhere in this file.
@@ -11,6 +11,8 @@ export type OperationType =
   | "sphere"
   | "torus"
   | "polygon_prism"
+  | "revolve"
+  | "sweep"
   | "union"
   | "cut"
   | "intersect"
@@ -53,6 +55,23 @@ export interface PolygonPrismOperation {
   sides: number;
   circumradius: number;
   height: number;
+}
+
+/** v3.3: closed [radius, z] section revolved about the Z axis. */
+export interface RevolveOperation {
+  type: "revolve";
+  /** [radius from Z axis, height along Z] pairs in mm. */
+  profile: [number, number][];
+  angle: number;
+}
+
+/** v3.3: circular profile swept along a 3D polyline path. */
+export interface SweepOperation {
+  type: "sweep";
+  radius: number;
+  /** [x, y, z] path points in mm. */
+  path: [number, number, number][];
+  closed: boolean;
 }
 
 export interface UnionOperation {
@@ -142,6 +161,8 @@ export type BuildOperation =
   | SphereOperation
   | TorusOperation
   | PolygonPrismOperation
+  | RevolveOperation
+  | SweepOperation
   | UnionOperation
   | CutOperation
   | IntersectOperation;
