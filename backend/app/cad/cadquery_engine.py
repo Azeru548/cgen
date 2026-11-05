@@ -227,6 +227,24 @@ def _center_on_origin(shape):
     return shape.translate(cq.Vector(-center.x, -center.y, -center.z))
 
 
+def _require_valid_solid(shape, hint: str):
+    """Reject a built shape that OCCT reports as broken or empty.
+
+    Profile operations can self-intersect (a sweep radius wider than the gap
+    between two path segments, a section folded back on itself). OCCT still
+    returns a shape for those, but it fails `isValid()` and would export a
+    corrupt STL, so surface a clear 422 instead of shipping bad geometry.
+    """
+    if shape.Volume() <= 1e-9:
+        raise ValueError(f"{hint} produced an empty solid")
+    if not shape.isValid():
+        raise ValueError(
+            f"{hint} produced an invalid (self-intersecting) solid; "
+            "check the profile/path and reduce the section or wire size"
+        )
+    return shape
+
+
 def _profile_points(points):
     """Coerce and clean a profile/path point list, dropping repeats.
 
@@ -265,7 +283,7 @@ def make_revolve(profile, angle: float = 360.0):
     # XZ workplane: local x -> world X (radius), local y -> world Z (height),
     # and the local (0, 1) axis is world +Z, so this revolves about Z.
     solid = wp.close().revolve(float(angle), (0, 0, 0), (0, 1, 0)).val()
-    return _center_on_origin(solid)
+    return _require_valid_solid(_center_on_origin(solid), "revolve")
 
 
 def make_sweep(radius: float, path, closed: bool = False):
@@ -301,7 +319,7 @@ def make_sweep(radius: float, path, closed: bool = False):
         .sweep(wire, isFrenet=True, transition="round")
         .val()
     )
-    return _center_on_origin(solid)
+    return _require_valid_solid(_center_on_origin(solid), "sweep")
 
 
 def as_shape(obj):

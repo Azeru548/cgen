@@ -89,6 +89,17 @@ specify positions, offsets, or rotations):
   unions of cylinders for routed tubes and wire. Both results are moved so
   their bounding-box center is the origin, like every other primitive; you
   still never position parts yourself.
+- revolve rules: for a hollow cup, pot or cap, give the FULL section
+  including the inner wall (out and back), or build the solid section and add
+  a \"shell\" feature. Never put fillet or chamfer on a revolve or sweep build
+  (they only apply to box-like edges): model the rounded corner directly as
+  several profile points instead, e.g. [[0,-25],[40,-25],[40,22],[37,25],[0,25]].
+- sweep rules: keep \"radius\" well below the length of the shortest path
+  segment and below the tightest corner gap, otherwise the tube intersects
+  itself and the request is rejected. Give enough points for a believable
+  bend (a 90° elbow needs at least one corner point). For a HOLLOW pipe or
+  elbow, cut a smaller sweep out of a larger one with the SAME path: cut
+  {base: sweep radius 20, tool: sweep radius 16} leaves a 4 mm wall.
 - union (result = base + tool): {"type": "union", "base": {...}, "tool": {...}}
 - cut (result = base - tool): {"type": "cut", "base": {...}, "tool": {...}}
 - intersect (result = the SHARED volume of base and tool; they must overlap):

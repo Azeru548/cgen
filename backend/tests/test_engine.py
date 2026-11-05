@@ -1001,3 +1001,37 @@ def test_export_operation_revolve_and_sweep():
         result = cadquery_engine.export_operation(spec.operation, name=spec.name)
         assert result["step_bytes"] > 0
         assert result["stl_bytes"] > 0
+
+
+def test_make_sweep_rejects_self_intersecting_path():
+    need_cq()
+    # A 5 mm wire cannot turn through a 4 mm gap: OCCT returns a broken solid,
+    # which must surface as a readable error instead of a corrupt STL.
+    with pytest.raises(ValueError, match="invalid"):
+        cadquery_engine.make_sweep(
+            5, [[0, 0, 0], [6, 0, 0], [6, 0, 4], [12, 0, 4]]
+        )
+
+
+def test_hollow_tube_is_a_cut_between_two_concentric_sweeps():
+    need_cq()
+    path = [[0, 0, 0], [150, 0, 0], [150, 0, 150]]
+    spec = CADSpec.model_validate(
+        {
+            "document_type": "3d_part",
+            "units": "mm",
+            "name": "elbow",
+            "operation": {
+                "type": "cut",
+                "base": {"type": "sweep", "radius": 20, "path": path},
+                "tool": {"type": "sweep", "radius": 16, "path": path},
+            },
+        }
+    )
+    solid = cadquery_engine.build_operation(spec.operation)
+    assert solid.isValid()
+    assert len(solid.Solids()) == 1
+    # Centring is per-operation, but both sweeps share the same path centre, so
+    # the 4 mm wall survives the cut.
+    expected = math.pi * (20**2 - 16**2) * 300
+    assert solid.Volume() == pytest.approx(expected, rel=0.02)
