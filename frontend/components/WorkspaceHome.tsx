@@ -1,10 +1,3 @@
-"use client";
-
-/**
- * WorkspaceHome — the bench index: every workspace as an engraved nameplate
- * (Precision Bench direction). Each plate carries a permanent serial, its
- * revision count and a delete control; selecting one enters the editor.
- */
 import Image from "next/image";
 import { useCallback, useMemo, useState } from "react";
 import { AccountChip } from "@/components/AccountChip";
@@ -46,8 +39,7 @@ function hash(s: string): number {
   return h;
 }
 
-/**
- * Day/month stamp straight from the ISO string. Going through `Date` would
+/** Day/month stamp straight from the ISO string. Going through `Date` would
  * make the server and the browser disagree across time zones on the same
  * revision.
  */
@@ -119,13 +111,6 @@ export function WorkspaceHome({
 
         <span className="topbar-spacer" />
 
-        <span className="home-project">
-          <span className="home-project-name">{project.name}</span>
-          <span className="home-project-note mono">
-            {workspaces.length} {workspaces.length === 1 ? "plate" : "plates"}
-          </span>
-        </span>
-
         <AccountChip />
 
         <button
@@ -196,20 +181,9 @@ export function WorkspaceHome({
                     data-testid={`tray-${ws.id}`}
                     aria-label={`Open ${ws.name}`}
                   >
-                    <span className="tray-top">
-                      <span className="tray-serial mono">{serialFor(ws, index)}</span>
-                      {active ? <span className="tray-flag mono">Last open</span> : null}
-                    </span>
-
                     <span className="tray-title">{ws.name}</span>
 
                     <span className="tray-stats">
-                      <span className="tray-stat">
-                        <span className="tray-stat-k mono">Revisions</span>
-                        <span className="tray-stat-v">
-                          {count === 0 ? "None" : String(count).padStart(2, "0")}
-                        </span>
-                      </span>
                       <span className="tray-stat">
                         <span className="tray-stat-k mono">Last stamp</span>
                         <span className="tray-stat-v">{stamped ?? "—"}</span>
