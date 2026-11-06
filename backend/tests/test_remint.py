@@ -41,7 +41,7 @@ def _no_groq(monkeypatch):
     monkeypatch.setattr(groq_client, "_get_client", fail_if_called)
 
 
-def _fake_assembly_export(assembly, *, request_id, file_store, artifacts=None):
+def _fake_assembly_export(assembly, *, request_id, file_store, artifacts=None, **_kwargs):
     from app.cad.assembly import resolve_relationships, validate_registry
     from app.services.generation import GeneratedFile, GenerationResult
 

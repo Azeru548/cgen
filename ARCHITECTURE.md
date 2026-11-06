@@ -60,8 +60,14 @@ Next.js 16 + React 19 + R3F + Firebase. Routes: `/` landing,
   fetch→parse→recenter; `TransformControls` translate; selection color;
   reframe on first-load / 1.5× change / reset only. Bridge:
   `lib/assembly.ts:sceneObjects()`.
-- Inspector: `AssemblyTree + ObjectInspector` (draft → Apply →
-  `/assembly/update`), `ParametricPanel + useParametricSession`
+- Inspector: `AssemblyTree + ObjectInspector`. Placement, name, visibility,
+  group, lock, and remove commit locally and keep existing mesh URLs.
+  Parameter Apply and library add hit `/assembly/update` / `/assembly/add`
+  with prior `component_files` so unchanged solids are not re-exported;
+  the viewer overlay stays off so other meshes do not flash. Any solid
+  change (parameter, add, remove) also re-exports the combined STEP/STL, so
+  downloads never lag behind geometry; pose-only edits keep the combined
+  file until remint. `ParametricPanel + useParametricSession`
   (650ms debounced `/rebuild` preview), `SpecPanel`, `RevisionHistory`,
   `Downloads` (STEP authoritative; links ~1h TTL, re-run on 404).
 - API: `lib/api.ts` (`generatePart/modifyPart/rebuildPart`,
@@ -84,3 +90,7 @@ No constraint solver, collision engine, threads, or mating (out of scope).
   extends delivery, not permanence.
 - Assembly placement is explicit transforms + lightweight relationships,
   not a solver. Fit conflicts fail with 422, never silent bad geometry.
+- Incremental assembly edits reuse per-object STL URLs. A geometry change
+  (parameter, add, remove) refreshes the combined STEP/STL; a pose, name,
+  lock or group edit reuses it, so the combined download can show the older
+  placement until a remint. Per-object STLs are always current.

@@ -24,17 +24,18 @@ import {
   humanizeApiError,
   modifyPart,
   remintFiles,
-  removeAssemblyComponent,
   resolveFileUrl,
   updateAssemblyComponent,
   type ApiError,
 } from "@/lib/api";
 import {
+  applyPlacementToResponse,
   expandSelectionToGroups,
   groupSelection,
   groupsOf,
   isAssemblySpec,
   isPartSpec,
+  removeComponentFromResponse,
   sceneObjects,
   setSelectionLocked,
   ungroupSelection,
@@ -200,6 +201,7 @@ export default function Home() {
   const firestoreDb = useFirestore();
   const { uid } = useProjectSync(project, setProject, firestoreDb, clearDrafts);
   const [homeNotice, setHomeNotice] = useState<string | null>(null);
+  const [lockViewer, setLockViewer] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -704,6 +706,7 @@ export default function Home() {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    setLockViewer(true);
     setStatus("generating");
     setGenerateError(null);
     setPreviewError(null);
@@ -728,6 +731,8 @@ export default function Home() {
       track("generate_failed");
       setGenerateError(humanizeApiError(err as ApiError));
       setStatus("error");
+    } finally {
+      setLockViewer(false);
     }
   }, [prompt, status, clearDrafts, visible]);
 
@@ -741,6 +746,7 @@ export default function Home() {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    setLockViewer(true);
     setStatus("generating");
     setGenerateError(null);
     setPreviewError(null);
@@ -766,6 +772,8 @@ export default function Home() {
       track("modify_failed");
       setGenerateError(humanizeApiError(err as ApiError));
       setStatus("error");
+    } finally {
+      setLockViewer(false);
     }
   }, [prompt, status, visible, clearDrafts, activeSelectedId, selectedObject]);
 
@@ -789,6 +797,7 @@ export default function Home() {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    setLockViewer(true);
     setStatus("generating");
     setGenerateError(null);
     setPreviewError(null);
@@ -800,6 +809,8 @@ export default function Home() {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setGenerateError(humanizeApiError(err as ApiError));
       setStatus("error");
+    } finally {
+      setLockViewer(false);
     }
   }, [status, visible]);
 
@@ -820,11 +831,16 @@ export default function Home() {
   }, [visible]);
 
   const commitAssembly = useCallback(
-    async (label: string, work: () => Promise<GenerateResponse>): Promise<boolean> => {
+    async (
+      label: string,
+      work: () => Promise<GenerateResponse>,
+      options: { lockViewer?: boolean } = {},
+    ): Promise<boolean> => {
       if (status === "generating") return false;
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
+      setLockViewer(options.lockViewer !== false);
       setStatus("generating");
       setGenerateError(null);
       try {
@@ -837,29 +853,66 @@ export default function Home() {
         setGenerateError(humanizeApiError(err as ApiError));
         setStatus("error");
         return false;
+      } finally {
+        setLockViewer(false);
       }
     },
     [status],
   );
 
+  const reuseFiles = useCallback(() => {
+    if (visible === null) return {};
+    const { files, component_files, specification } = visible.response;
+    if (component_files) return { component_files, files };
+    if (isPartSpec(specification)) {
+      return {
+        component_files: {
+          generated_1: { step: files.step, stl: files.stl },
+        },
+        files,
+      };
+    }
+    return { files };
+  }, [visible]);
+
   const handleAddComponent = useCallback(
     (type: string, count = 1) => {
-      void commitAssembly(`Add ${type}`, () =>
-        addAssemblyComponent(specRecord(), type, { count }, abortRef.current?.signal),
+      void commitAssembly(
+        `Add ${type}`,
+        () =>
+          addAssemblyComponent(
+            specRecord(),
+            type,
+            { count, ...reuseFiles() },
+            abortRef.current?.signal,
+          ),
+        { lockViewer: false },
       );
     },
-    [commitAssembly, specRecord],
+    [commitAssembly, specRecord, reuseFiles],
   );
 
   const handleRemoveComponent = useCallback(
     (id: string) => {
-      const spec = specRecord();
-      if (spec === null) return;
-      void commitAssembly(`Remove ${id}`, () =>
-        removeAssemblyComponent(spec, id, abortRef.current?.signal),
-      );
+      if (visible === null) return;
+      const next = removeComponentFromResponse(visible.response, id);
+      if (next === null) {
+        setGenerateError(
+          "Cannot remove the last object. Clear the viewer instead.",
+        );
+        setStatus("error");
+        return;
+      }
+      setProject((p) => appendRevision(p, "assemble", `Remove ${id}`, next));
+      setGenerateError(null);
+      forgetDraft(id);
+      setSelectedIds((prev) => prev.filter((item) => item !== id));
+      if (selectedId === id) {
+        setSelectedId(null);
+        setSelectedInstance(-1);
+      }
     },
-    [commitAssembly, specRecord],
+    [visible, forgetDraft, selectedId],
   );
 
   const handleToggleVisible = useCallback((id: string) => {
@@ -982,32 +1035,58 @@ export default function Home() {
   );
 
   const handleApplyPlacement = useCallback(() => {
-    const spec = specRecord();
-    if (spec === null || activeSelectedId === null) return;
+    if (visible === null || activeSelectedId === null) return;
     const id = activeSelectedId;
-    const vis = Object.prototype.hasOwnProperty.call(visibilityDraft, id)
-      ? visibilityDraft[id]
-      : selectedObject?.visible;
-    void commitAssembly(`Place ${id}`, () =>
-      updateAssemblyComponent(
-        spec,
-        id,
-        {
-          name: draftName,
-          transform: { position: draftPosition, rotation: draftRotation },
-          visible: vis,
-          ...(draftInstances.length > 0 ? { instances: draftInstances } : {}),
-          // Apply is one explicit commit: include the parameter draft too.
-          ...(paramsDirty ? { parameters: draftParams } : {}),
-        },
-        abortRef.current?.signal,
-      ),
-    ).then((ok) => {
-      if (ok) forgetDraft(id);
-    });
+    if (paramsDirty) {
+      const spec = specRecord();
+      if (spec === null) return;
+      const vis = Object.prototype.hasOwnProperty.call(visibilityDraft, id)
+        ? visibilityDraft[id]
+        : selectedObject?.visible;
+      void commitAssembly(
+        `Place ${id}`,
+        () =>
+          updateAssemblyComponent(
+            spec,
+            id,
+            {
+              name: draftName,
+              transform: { position: draftPosition, rotation: draftRotation },
+              visible: vis,
+              ...(draftInstances.length > 0 ? { instances: draftInstances } : {}),
+              parameters: draftParams,
+              ...reuseFiles(),
+            },
+            abortRef.current?.signal,
+          ),
+        { lockViewer: false },
+      ).then((ok) => {
+        if (ok) forgetDraft(id);
+      });
+      return;
+    }
+    const ids = [...new Set([id, ...selectedIds])];
+    let next = visible.response;
+    for (const componentId of ids) {
+      const object = objects.find((item) => item.id === componentId);
+      if (object === undefined) continue;
+      const patched = applyPlacementToResponse(next, componentId, {
+        name: object.name,
+        transform: object.transform,
+        visible: object.visible,
+        ...(object.instances.length > 0 ? { instances: object.instances } : {}),
+      });
+      if (patched !== null) next = patched;
+    }
+    setProject((p) => appendRevision(p, "assemble", `Place ${id}`, next));
+    setGenerateError(null);
+    for (const componentId of ids) forgetDraft(componentId);
   }, [
+    visible,
     specRecord,
     activeSelectedId,
+    selectedIds,
+    objects,
     selectedObject,
     draftName,
     draftPosition,
@@ -1018,6 +1097,7 @@ export default function Home() {
     visibilityDraft,
     commitAssembly,
     forgetDraft,
+    reuseFiles,
   ]);
 
   const handleApplyParams = useCallback(() => {
@@ -1027,21 +1107,25 @@ export default function Home() {
     const vis = Object.prototype.hasOwnProperty.call(visibilityDraft, id)
       ? visibilityDraft[id]
       : selectedObject?.visible;
-    void commitAssembly(`Edit ${id}`, () =>
-      updateAssemblyComponent(
-        spec,
-        id,
-        {
-          parameters: draftParams,
-          // Commit the visible placement too, so applying parameters cannot
-          // silently discard an unsaved move.
-          name: draftName,
-          transform: { position: draftPosition, rotation: draftRotation },
-          visible: vis,
-          ...(draftInstances.length > 0 ? { instances: draftInstances } : {}),
-        },
-        abortRef.current?.signal,
-      ),
+    void commitAssembly(
+      `Edit ${id}`,
+      () =>
+        updateAssemblyComponent(
+          spec,
+          id,
+          {
+            parameters: draftParams,
+            // Commit the visible placement too, so applying parameters cannot
+            // silently discard an unsaved move.
+            name: draftName,
+            transform: { position: draftPosition, rotation: draftRotation },
+            visible: vis,
+            ...(draftInstances.length > 0 ? { instances: draftInstances } : {}),
+            ...reuseFiles(),
+          },
+          abortRef.current?.signal,
+        ),
+      { lockViewer: false },
     ).then((ok) => {
       if (ok) forgetDraft(id);
     });
@@ -1057,6 +1141,7 @@ export default function Home() {
     visibilityDraft,
     commitAssembly,
     forgetDraft,
+    reuseFiles,
   ]);
 
   const handleNewWorkspace = useCallback(() => {
@@ -1267,7 +1352,7 @@ export default function Home() {
                   isPartSpec(displayResult.specification),
               };
             })}
-            busy={busy}
+            busy={busy && lockViewer}
             previewError={previewError}
             onPreviewStatus={handlePreviewStatus}
             onSelectExample={setPrompt}

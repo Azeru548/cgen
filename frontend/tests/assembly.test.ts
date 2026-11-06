@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyPlacementToResponse,
   expandSelectionToGroups,
   groupSelection,
   isAssemblySpec,
   isPartSpec,
   posesOf,
+  promoteResponseToAssembly,
+  removeComponentFromResponse,
   rotateSelection,
   sceneObjects,
   setSelectionLocked,
@@ -207,5 +210,60 @@ describe("groups and rotation", () => {
       "arduino_1",
       "screws_1",
     ]);
+  });
+});
+
+describe("incremental scene commits", () => {
+  it("applies placement without changing mesh URLs", () => {
+    const before = response(ASSEMBLY);
+    const next = applyPlacementToResponse(before, "arduino_1", {
+      transform: { position: [12, 0, 8], rotation: [0, 0, 45] },
+      name: "Board",
+    });
+    expect(next).not.toBeNull();
+    expect(next?.component_files?.arduino_1.stl.download_url).toBe(
+      before.component_files?.arduino_1.stl.download_url,
+    );
+    expect(next?.component_files?.screws_1.stl.download_url).toBe(
+      before.component_files?.screws_1.stl.download_url,
+    );
+    const moved = isAssemblySpec(next!.specification)
+      ? next!.specification.components[0]
+      : null;
+    expect(moved?.transform.position).toEqual([12, 0, 8]);
+    expect(moved?.name).toBe("Board");
+  });
+
+  it("promotes a part then keeps its files when placing", () => {
+    const before = response(PART);
+    const next = applyPlacementToResponse(before, "generated_1", {
+      transform: { position: [5, 0, 0], rotation: [0, 0, 0] },
+    });
+    const promoted = promoteResponseToAssembly(before);
+    expect(next?.component_files?.generated_1.stl.download_url).toBe(
+      promoted.component_files?.generated_1.stl.download_url,
+    );
+    expect(isAssemblySpec(next!.specification)).toBe(true);
+  });
+
+  it("removes one object and keeps the other mesh URL", () => {
+    const before = response(ASSEMBLY);
+    const next = removeComponentFromResponse(before, "screws_1");
+    expect(next).not.toBeNull();
+    expect(isAssemblySpec(next!.specification)).toBe(true);
+    if (!isAssemblySpec(next!.specification)) return;
+    expect(next!.specification.components.map((c) => c.id)).toEqual(["arduino_1"]);
+    expect(next!.component_files?.arduino_1.stl.download_url).toBe(
+      before.component_files?.arduino_1.stl.download_url,
+    );
+    expect(next!.component_files?.screws_1).toBeUndefined();
+  });
+
+  it("refuses to remove the last object", () => {
+    const only = {
+      ...ASSEMBLY,
+      components: [ASSEMBLY.components[0]],
+    };
+    expect(removeComponentFromResponse(response(only), "arduino_1")).toBeNull();
   });
 });

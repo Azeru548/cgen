@@ -350,6 +350,8 @@ export async function addAssemblyComponent(
     parameters?: Record<string, ParamValue>;
     count?: number;
     name?: string;
+    component_files?: GenerateResponse["component_files"];
+    files?: GenerateResponse["files"];
   } = {},
   signal?: AbortSignal,
 ): Promise<GenerateResponse> {
@@ -361,6 +363,8 @@ export async function addAssemblyComponent(
       parameters: options.parameters,
       count: options.count ?? 1,
       name: options.name,
+      component_files: options.component_files,
+      files: options.files,
     },
     signal,
     "Add component",
@@ -371,10 +375,19 @@ export async function removeAssemblyComponent(
   specification: Record<string, unknown>,
   componentId: string,
   signal?: AbortSignal,
+  reuse?: {
+    component_files?: GenerateResponse["component_files"];
+    files?: GenerateResponse["files"];
+  },
 ): Promise<GenerateResponse> {
   return postJson(
     "/assembly/remove",
-    { specification, component_id: componentId },
+    {
+      specification,
+      component_id: componentId,
+      component_files: reuse?.component_files,
+      files: reuse?.files,
+    },
     signal,
     "Remove component",
   );
@@ -393,6 +406,8 @@ export async function updateAssemblyComponent(
       rotation: [number, number, number];
     }>;
     locked?: boolean;
+    component_files?: GenerateResponse["component_files"];
+    files?: GenerateResponse["files"];
   },
   signal?: AbortSignal,
 ): Promise<GenerateResponse> {

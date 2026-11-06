@@ -6,6 +6,7 @@ component registry; files go through the existing FileStore.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from pathlib import Path
@@ -83,30 +84,136 @@ def _build_local_solid(component: ComponentInstance):
     )
 
 
+def geometry_signature(component: ComponentInstance) -> str:
+    """Fingerprint of the solid itself — pose, name, lock, and groups do not count.
+
+    Parameters are coerced through the registry so `10` and `10.0` (and filled
+    defaults) match the document the exporter actually builds.
+    """
+    try:
+        params = registry.validate_parameters(
+            component.component_type, component.parameters
+        )
+    except ValueError:
+        params = component.parameters
+    generated = (
+        component.generated.model_dump() if component.generated is not None else None
+    )
+    payload = {
+        "type": component.component_type,
+        "parameters": params,
+        "generated": generated,
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def parse_file_pair(raw: object) -> dict[str, GeneratedFile] | None:
+    if not isinstance(raw, dict):
+        return None
+    step = raw.get("step")
+    stl = raw.get("stl")
+    if not isinstance(step, dict) or not isinstance(stl, dict):
+        return None
+    try:
+        return {
+            "step": GeneratedFile(
+                format="step",
+                filename=str(step["filename"]),
+                bytes=int(step["bytes"]),
+                download_url=str(step["download_url"]),
+            ),
+            "stl": GeneratedFile(
+                format="stl",
+                filename=str(stl["filename"]),
+                bytes=int(stl["bytes"]),
+                download_url=str(stl["download_url"]),
+            ),
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def parse_component_files(
+    raw: object,
+) -> dict[str, dict[str, GeneratedFile]]:
+    if not isinstance(raw, dict):
+        return {}
+    parsed: dict[str, dict[str, GeneratedFile]] = {}
+    for cid, pair in raw.items():
+        if not isinstance(cid, str):
+            continue
+        files = parse_file_pair(pair)
+        if files is not None:
+            parsed[cid] = files
+    return parsed
+
+
+def reusable_ids(
+    previous: list[ComponentInstance],
+    current: list[ComponentInstance],
+    available_files: dict[str, dict[str, GeneratedFile]],
+) -> set[str]:
+    """Component ids whose local solid (and therefore STL) can be kept."""
+    prior = {component.id: component for component in previous}
+    keep: set[str] = set()
+    for component in current:
+        old = prior.get(component.id)
+        if old is None or component.id not in available_files:
+            continue
+        if geometry_signature(old) == geometry_signature(component):
+            keep.add(component.id)
+    return keep
+
+
 def export_assembly_document(
     assembly: AssemblySpec,
     *,
     request_id: str,
     file_store: FileStore,
     artifacts: ArtifactStore | None = None,
+    previous_components: list[ComponentInstance] | None = None,
+    reuse_component_files: dict[str, dict[str, GeneratedFile]] | None = None,
+    reuse_combined_files: dict[str, GeneratedFile] | None = None,
 ) -> GenerationResult:
-    """Build every component, export per-object + compound files."""
+    """Build changed components; reuse unchanged per-object files.
+
+    Pose, visibility, name, lock, and grouping never invalidate a component
+    STL — the viewer applies world transforms on the existing mesh — so those
+    edits are free and also keep the combined files.
+
+    The combined STEP/STL is rebuilt whenever at least one solid changed
+    (parameter edit, add, remove). Reusing it there would hand the user a
+    download with the old geometry, and STEP is the authoritative artifact.
+    """
     started = time.monotonic()
     validated = resolve_relationships(validate_registry(assembly))
     stem = sanitize_name(validated.name, fallback="assembly")
-
-    logger.info(
-        "assembly_export_started request_id=%s components=%d",
-        request_id,
-        len(validated.components),
+    reuse_files = reuse_component_files or {}
+    keep = reusable_ids(
+        previous_components or [], validated.components, reuse_files
     )
 
-    world_solids = []
+    logger.info(
+        "assembly_export_started request_id=%s components=%d reuse=%d",
+        request_id,
+        len(validated.components),
+        len(keep),
+    )
+
     component_files: dict[str, dict[str, GeneratedFile]] = {}
     cad_started = time.monotonic()
+    rebuilt = 0
+    # Locals already built for the components that changed, reused by the
+    # combined pass below instead of building them twice.
+    built_locals: dict[str, object] = {}
 
     for component in validated.components:
+        if component.id in keep:
+            component_files[component.id] = reuse_files[component.id]
+            continue
+        rebuilt += 1
         local = _build_local_solid(component)
+        built_locals[component.id] = local
         local_export = cadquery_engine._export_solid(
             local, f"{stem}_{component.id}", out_dir=None
         )
@@ -117,27 +224,39 @@ def export_assembly_document(
             request_id,
             artifacts,
         )
-        for pose in instance_poses(component):
-            if not component.visible:
-                continue
-            world_solids.append(
-                cadquery_engine.apply_transform(
-                    local, pose.position, pose.rotation
+
+    # A changed solid invalidates the combined download; a pose-only edit does
+    # not (the world transforms live in the spec, not in the component meshes).
+    rebuild_combined = reuse_combined_files is None or rebuilt > 0
+    if rebuild_combined:
+        world_solids = []
+        for component in validated.components:
+            local = built_locals.get(component.id)
+            if local is None:
+                local = _build_local_solid(component)
+            for pose in instance_poses(component):
+                if not component.visible:
+                    continue
+                world_solids.append(
+                    cadquery_engine.apply_transform(
+                        local, pose.position, pose.rotation
+                    )
                 )
+        if not world_solids:
+            raise ValueError(
+                "Nothing to export — every component is hidden. Show at least one object."
             )
+        combined = cadquery_engine.export_solids(world_solids, stem)
+        files = _files_from_export(combined, stem, file_store, request_id, artifacts)
+    else:
+        files = reuse_combined_files
 
-    if not world_solids:
-        raise ValueError(
-            "Nothing to export — every component is hidden. Show at least one object."
-        )
-
-    combined = cadquery_engine.export_solids(world_solids, stem)
-    files = _files_from_export(combined, stem, file_store, request_id, artifacts)
     cad_ms = int((time.monotonic() - cad_started) * 1000)
     total_ms = int((time.monotonic() - started) * 1000)
     logger.info(
-        "assembly_export_completed request_id=%s cad_ms=%d total_ms=%d",
+        "assembly_export_completed request_id=%s rebuilt=%d cad_ms=%d total_ms=%d",
         request_id,
+        rebuilt,
         cad_ms,
         total_ms,
     )
@@ -231,6 +350,28 @@ def _placement_spacing(component_type: str, parameters: dict[str, ParamValue]) -
     return extent + 10.0
 
 
+def _reuse_context(
+    current: CADSpec | AssemblySpec | None,
+    component_files: object = None,
+    files: object = None,
+) -> tuple[
+    list[ComponentInstance] | None,
+    dict[str, dict[str, GeneratedFile]] | None,
+    dict[str, GeneratedFile] | None,
+]:
+    """Previous solids + file URLs so an edit can skip rebuilding them."""
+    if current is None:
+        return None, None, None
+    prior = list(as_assembly(current).components)
+    reused = parse_component_files(component_files)
+    if not reused and isinstance(current, CADSpec):
+        pair = parse_file_pair(files)
+        if pair is not None:
+            reused = {prior[0].id: pair}
+    combined = parse_file_pair(files)
+    return prior, (reused or None), combined
+
+
 def add_component(
     current: CADSpec | AssemblySpec | None,
     component_type: str,
@@ -242,6 +383,8 @@ def add_component(
     request_id: str,
     file_store: FileStore,
     artifacts: ArtifactStore | None = None,
+    component_files: object = None,
+    files: object = None,
 ) -> GenerationResult:
     definition = registry.get(component_type)
     if not definition.insertable:
@@ -283,8 +426,17 @@ def add_component(
         components=prior + [added],
         groups=groups,
     )
+    previous, reuse_files, reuse_combined = _reuse_context(
+        current, component_files, files
+    )
     return _export(
-        next_spec, request_id=request_id, file_store=file_store, artifacts=artifacts
+        next_spec,
+        request_id=request_id,
+        file_store=file_store,
+        artifacts=artifacts,
+        previous_components=previous,
+        reuse_component_files=reuse_files,
+        reuse_combined_files=reuse_combined,
     )
 
 
@@ -294,19 +446,30 @@ def _export(
     request_id: str,
     file_store: FileStore,
     artifacts: ArtifactStore | None,
+    previous_components: list[ComponentInstance] | None = None,
+    reuse_component_files: dict[str, dict[str, GeneratedFile]] | None = None,
+    reuse_combined_files: dict[str, GeneratedFile] | None = None,
 ):
     """Call the exporter, passing `artifacts` only when one is configured.
 
     Keeping the default call shape identical means existing callers and stubs
     of `export_assembly_document` continue to work unchanged.
     """
-    if artifacts is None:
-        return export_assembly_document(
-            spec, request_id=request_id, file_store=file_store
-        )
-    return export_assembly_document(
-        spec, request_id=request_id, file_store=file_store, artifacts=artifacts
-    )
+    kwargs: dict = {
+        "request_id": request_id,
+        "file_store": file_store,
+    }
+    if artifacts is not None:
+        kwargs["artifacts"] = artifacts
+    # Only forward reuse when the client actually sent prior files. Extra
+    # kwargs would TypeError test doubles that still use the original
+    # export_assembly_document signature.
+    if reuse_component_files:
+        kwargs["previous_components"] = previous_components or []
+        kwargs["reuse_component_files"] = reuse_component_files
+    if reuse_combined_files is not None:
+        kwargs["reuse_combined_files"] = reuse_combined_files
+    return export_assembly_document(spec, **kwargs)
 
 
 def remove_component(
@@ -316,6 +479,8 @@ def remove_component(
     request_id: str,
     file_store: FileStore,
     artifacts: ArtifactStore | None = None,
+    component_files: object = None,
+    files: object = None,
 ) -> GenerationResult:
     assembly = as_assembly(current)
     remaining = [c for c in assembly.components if c.id != component_id]
@@ -330,8 +495,17 @@ def remove_component(
             "groups": _prune_groups(assembly.groups, remaining_ids),
         }
     )
+    previous, reuse_files, reuse_combined = _reuse_context(
+        current, component_files, files
+    )
     return _export(
-        next_spec, request_id=request_id, file_store=file_store, artifacts=artifacts
+        next_spec,
+        request_id=request_id,
+        file_store=file_store,
+        artifacts=artifacts,
+        previous_components=previous,
+        reuse_component_files=reuse_files,
+        reuse_combined_files=reuse_combined,
     )
 
 
@@ -361,6 +535,8 @@ def update_component(
     request_id: str,
     file_store: FileStore,
     artifacts: ArtifactStore | None = None,
+    component_files: object = None,
+    files: object = None,
 ) -> GenerationResult:
     assembly = as_assembly(current)
     found = False
@@ -391,8 +567,17 @@ def update_component(
     if not found:
         raise ValueError(f"No component with id '{component_id}' in this assembly.")
     next_spec = assembly.model_copy(update={"components": updated})
+    previous, reuse_files, reuse_combined = _reuse_context(
+        current, component_files, files
+    )
     return _export(
-        next_spec, request_id=request_id, file_store=file_store, artifacts=artifacts
+        next_spec,
+        request_id=request_id,
+        file_store=file_store,
+        artifacts=artifacts,
+        previous_components=previous,
+        reuse_component_files=reuse_files,
+        reuse_combined_files=reuse_combined,
     )
 
 

@@ -296,7 +296,7 @@ def test_generate_attaches_beside_existing_part(monkeypatch):
     )
     monkeypatch.setattr(groq_client, "parse_prompt_to_spec", lambda prompt: spec)
 
-    def fake_export(assembly, *, request_id, file_store, artifacts=None):
+    def fake_export(assembly, *, request_id, file_store, artifacts=None, **_kwargs):
         from app.services.generation import GeneratedFile, GenerationResult
 
         files = {

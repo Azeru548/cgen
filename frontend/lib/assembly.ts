@@ -111,6 +111,100 @@ export function componentCount(spec: DocumentSpecification): number {
   return spec.components.length;
 }
 
+/** Lift a single 3d_part response into a one-object assembly, reusing its files. */
+export function promoteResponseToAssembly(
+  response: GenerateResponse,
+): GenerateResponse {
+  const spec = response.specification;
+  if (isAssemblySpec(spec)) return response;
+  const assembly: AssemblySpecification = {
+    document_type: "3d_assembly",
+    units: "mm",
+    name: spec.name,
+    schema_version: "4.1",
+    components: [
+      {
+        id: "generated_1",
+        component_type: "generated_part",
+        name: spec.name,
+        parameters: {},
+        transform: identityTransform(),
+        visible: true,
+        instances: [],
+        relationships: [],
+        generated: spec,
+        locked: false,
+      },
+    ],
+    groups: [],
+  };
+  return {
+    ...response,
+    specification: assembly,
+    component_files: {
+      generated_1: {
+        step: response.files.step,
+        stl: response.files.stl,
+      },
+      ...response.component_files,
+    },
+  };
+}
+
+/** Commit pose/name/visibility without regenerating meshes. */
+export function applyPlacementToResponse(
+  response: GenerateResponse,
+  componentId: string,
+  patch: Partial<
+    Pick<ComponentInstance, "transform" | "visible" | "name" | "instances">
+  >,
+): GenerateResponse | null {
+  const promoted = promoteResponseToAssembly(response);
+  const spec = promoted.specification;
+  if (!isAssemblySpec(spec)) return null;
+  if (!spec.components.some((component) => component.id === componentId)) {
+    return null;
+  }
+  return {
+    ...promoted,
+    specification: {
+      ...spec,
+      components: spec.components.map((component) =>
+        component.id === componentId ? { ...component, ...patch } : component,
+      ),
+    },
+  };
+}
+
+/** Drop one object from the scene. Meshes of the rest stay; combined STEP is stale until remint. */
+export function removeComponentFromResponse(
+  response: GenerateResponse,
+  componentId: string,
+): GenerateResponse | null {
+  const promoted = promoteResponseToAssembly(response);
+  const spec = promoted.specification;
+  if (!isAssemblySpec(spec)) return null;
+  const remaining = spec.components.filter(
+    (component) => component.id !== componentId,
+  );
+  if (remaining.length === spec.components.length) return null;
+  if (remaining.length === 0) return null;
+  const remainingIds = new Set(remaining.map((component) => component.id));
+  const groups = groupsOf(spec)
+    .map((group) => ({
+      ...group,
+      component_ids: group.component_ids.filter((id) => remainingIds.has(id)),
+    }))
+    .filter((group) => group.component_ids.length >= 2);
+  const componentFiles = { ...(promoted.component_files ?? {}) };
+  delete componentFiles[componentId];
+  return {
+    ...promoted,
+    specification: { ...spec, components: remaining, groups },
+    component_files: componentFiles,
+  };
+}
+
 /** Draft overlay: replace one component's pose/visibility/name without a revision. */
 export function withComponentPatch(
   spec: AssemblySpecification,

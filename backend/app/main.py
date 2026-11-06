@@ -584,11 +584,21 @@ class AssemblyAddRequest(BaseModel):
     )
     count: int = Field(default=1, ge=1, le=12, description="Repeated instances.")
     name: str | None = Field(default=None, description="Optional display name.")
+    component_files: dict | None = Field(
+        default=None,
+        description="Current per-component file URLs so unchanged solids are not rebuilt.",
+    )
+    files: dict | None = Field(
+        default=None,
+        description="Current combined STEP/STL URLs to keep when geometry is unchanged.",
+    )
 
 
 class AssemblyRemoveRequest(BaseModel):
     specification: dict
     component_id: str
+    component_files: dict | None = None
+    files: dict | None = None
 
 
 class AssemblyUpdateRequest(BaseModel):
@@ -600,6 +610,8 @@ class AssemblyUpdateRequest(BaseModel):
     name: str | None = None
     instances: list[dict] | None = None
     locked: bool | None = None
+    component_files: dict | None = None
+    files: dict | None = None
 
 
 def _parse_transform(raw: dict | None):
@@ -665,6 +677,8 @@ def assembly_add(body: AssemblyAddRequest, caller: Caller_):
             request_id=request_id,
             file_store=file_store,
             artifacts=artifact_store,
+            component_files=body.component_files,
+            files=body.files,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -698,6 +712,8 @@ def assembly_remove(body: AssemblyRemoveRequest, caller: Caller_):
             request_id=request_id,
             file_store=file_store,
             artifacts=artifact_store,
+            component_files=body.component_files,
+            files=body.files,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -737,6 +753,8 @@ def assembly_update(body: AssemblyUpdateRequest, caller: Caller_):
             request_id=request_id,
             file_store=file_store,
             artifacts=artifact_store,
+            component_files=body.component_files,
+            files=body.files,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
