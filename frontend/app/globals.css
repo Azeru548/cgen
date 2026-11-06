@@ -3521,7 +3521,7 @@ button { font: inherit; color: inherit; }
 .timeline-body {
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: 172px minmax(0, 1fr);
+  grid-template-columns: 208px minmax(0, 1fr);
   min-height: 0;
   overflow: auto;
 }
@@ -3597,6 +3597,31 @@ button { font: inherit; color: inherit; }
   font-size: 0.54rem;
   color: var(--ink-faint);
 }
+
+.timeline-name-add {
+  flex: none;
+  height: 1.05rem;
+  margin-right: 0.2rem;
+  padding: 0 0.3rem;
+  display: flex;
+  align-items: center;
+  background: none;
+  border: 1px solid rgba(232, 234, 237, 0.22);
+  border-radius: 2px;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.timeline-name-add:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: rgba(232, 234, 237, 0.45);
+}
+
+.timeline-name-add:disabled { opacity: 0.4; cursor: default; }
 
 .timeline-name-clear {
   flex: none;
@@ -3682,29 +3707,6 @@ button { font: inherit; color: inherit; }
 .timeline-key.is-dragging {
   background: #fff;
   box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.18);
-}
-
-.timeline-key-add {
-  position: absolute;
-  top: 50%;
-  left: 0.35rem;
-  transform: translateY(-50%);
-  font-family: var(--sans);
-  font-size: 0.55rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: rgba(232, 234, 237, 0.55);
-  background: transparent;
-  border: 1px dashed rgba(232, 234, 237, 0.22);
-  border-radius: 2px;
-  padding: 0.1rem 0.4rem;
-  cursor: pointer;
-}
-
-.timeline-key-add:hover:not(:disabled) {
-  color: #fff;
-  border-color: var(--signal);
 }
 
 .timeline-playhead {

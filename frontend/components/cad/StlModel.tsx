@@ -165,12 +165,15 @@ export type ViewName = "iso" | "front" | "top" | "right";
  *  CAD→viewer wrapper, so CAD +Z is world +Y: `front` looks along CAD −Y and
  *  `top` looks down CAD −Z, exactly like a drawing's front/top views.
  *
- *  `iso` is the default "bench" view: it looks down CAD −Z with CAD +Y up the
- *  screen, so flat parts (boards, plates, PCBs) read face-on the way they do
- *  on a bench instead of lying flat on the floor and needing a fix-up rotation
- *  before they are useful. */
+ *  `iso` is the default three-quarter view: CAD +Y runs up the screen and CAD
+ *  +Z (the face of a flat part) leans towards the camera, so a board or plate
+ *  is read the way it sits on a desk — upright, in 3D, with the grid behind it.
+ *
+ *  These are world vectors. In CAD terms `iso` is (1, 0.62, 1) — the viewer's
+ *  long-standing default — which is (1, 1, -0.62) here because the scene
+ *  wrapper maps CAD (x, y, z) to world (x, z, -y). */
 export const VIEW_DIRECTIONS: Record<ViewName, [number, number, number]> = {
-  iso: [0.4, 1, 0.6],
+  iso: [1, 1, -0.62],
   front: [0, 0, 1],
   top: [0, 1, 0],
   right: [1, 0, 0],
@@ -185,6 +188,11 @@ export const VIEW_UP: Record<ViewName, [number, number, number]> = {
   right: [0, 1, 0],
 };
 
+/** Camera distance as a multiple of the fitting distance. Above 1 the part
+ *  sits back in the frame with air and grid around it instead of filling the
+ *  well edge to edge. */
+const FRAME_BREATHING_ROOM = 1.9;
+
 interface FrameCameraProps {
   group: THREE.Object3D | null;
   contentRev: number;
@@ -195,6 +203,8 @@ interface FrameCameraProps {
   onScale?: (maxDim: number) => void;
   /** One-shot standard-view request; `id` re-triggers the same view. */
   viewRequest?: { id: number; view: ViewName } | null;
+  /** Perspective or orthographic; a swap re-fits the new camera once. */
+  projection?: "persp" | "ortho";
 }
 
 /** Frames any model size: distance derives from the bounding box, so a
@@ -209,9 +219,12 @@ export function FrameCamera({
   hasContent,
   onScale,
   viewRequest = null,
+  projection = "persp",
 }: FrameCameraProps) {
   const camera = useThree((s) => s.camera);
-  const viewport = useThree((s) => s.size);
+  // Read the canvas size on demand: the framing must not depend on a resize,
+  // or every layout change silently re-aims the camera the user just orbited.
+  const getState = useThree((s) => s.get);
   const controls = useThree((s) => s.controls) as unknown as {
     target: THREE.Vector3;
     update: () => void;
@@ -250,10 +263,11 @@ export function FrameCamera({
     (view: ViewName, maxDim: number, centre: [number, number, number]) => {
       const target = new THREE.Vector3(...centre);
       const direction = new THREE.Vector3(...VIEW_DIRECTIONS[view]).normalize();
+      const { width, height } = getState().size;
       const ortho = camera as THREE.OrthographicCamera;
       if (ortho.isOrthographicCamera) {
         // The ortho frustum is in pixels, so `zoom` is pixels-per-mm.
-        const pixels = Math.max(Math.min(viewport.width, viewport.height), 1);
+        const pixels = Math.max(Math.min(width, height), 1);
         ortho.zoom = pixels / (maxDim * 1.7);
         ortho.near = -maxDim * 20;
         ortho.far = maxDim * 40;
@@ -262,7 +276,8 @@ export function FrameCamera({
       } else {
         const perspective = camera as THREE.PerspectiveCamera;
         const fov = ((perspective.fov || 40) * Math.PI) / 180;
-        const distance = (maxDim / 2 / Math.tan(fov / 2)) * 1.6;
+        const distance =
+          (maxDim / 2 / Math.tan(fov / 2)) * FRAME_BREATHING_ROOM;
         perspective.near = Math.max(distance / 1000, 0.1);
         perspective.far = Math.max(distance * 20, 1000);
         perspective.updateProjectionMatrix();
@@ -274,7 +289,7 @@ export function FrameCamera({
       controls?.update();
       viewRef.current = view;
     },
-    [camera, controls, viewport.height, viewport.width],
+    [camera, controls, getState],
   );
 
   const frame = useCallback(() => {
@@ -318,14 +333,18 @@ export function FrameCamera({
     place(viewRequest.view, measured.maxDim, measured.centre);
   }, [viewRequest, measure, place]);
 
-  // Projection swap (perspective <-> orthographic) arrives as a new camera
-  // object: re-fit it to the content before the first frame is drawn.
+  // Projection swap (perspective <-> orthographic): fit the new camera once.
+  // Keyed on the requested projection, not on the camera object, so a re-render
+  // can never re-aim a camera the user has orbited.
+  const placedProjectionRef = useRef<"persp" | "ortho">(projection);
   useEffect(() => {
+    if (placedProjectionRef.current === projection) return;
+    placedProjectionRef.current = projection;
     if (!hasContent) return;
     const measured = measure();
     if (!measured) return;
     place(viewRef.current, measured.maxDim, measured.centre);
-  }, [camera, hasContent, measure, place]);
+  }, [projection, hasContent, measure, place]);
   /* eslint-enable react-hooks/immutability */
 
   return null;

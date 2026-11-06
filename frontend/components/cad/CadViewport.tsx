@@ -59,6 +59,9 @@ export interface SceneViewObject {
   activeInstanceIndex?: number;
   /** Show the move/rotate gizmo on this object (primary selection only). */
   gizmo?: boolean;
+  /** Ignore this part's motion track and draw its draft pose instead: true
+   *  while the gizmo is dragging it, so the drag is live. */
+  freezeMotion?: boolean;
 }
 
 /** Live numbers for the selected object. Position/rotation come from the
@@ -342,11 +345,14 @@ function SelectableObject({
   measure?: boolean;
   onMeasure?: (point: THREE.Vector3) => void;
 }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const rotateRef = useRef<THREE.Group>(null);
+  // The gizmo rides on its own anchor node, sitting on the part it edits, so
+  // the arrows are where the part is — not back at the world origin. Deltas are
+  // measured against where the anchor started, and the mesh itself is never
+  // attached to the gizmo (the editor's drafts move it).
+  const anchorRef = useRef<THREE.Group>(null);
+  const anchorBaseRef = useRef<[number, number, number]>([0, 0, 0]);
   const dragRef = useRef(false);
-  const [groupNode, setGroupNode] = useState<THREE.Group | null>(null);
-  const [rotateNode, setRotateNode] = useState<THREE.Group | null>(null);
+  const [anchorNode, setAnchorNode] = useState<THREE.Group | null>(null);
   const showGizmo = canDrag && (object.gizmo ?? object.selected) && object.url.length > 0;
   // -1 targets the component transform (single-pose parts / whole-component
   // move); >=0 targets one instance of a repeated component.
@@ -356,26 +362,33 @@ function SelectableObject({
   // nowhere to live; the editor disables motion for them.
   const track =
     motion?.tracks.find((item) => item.component_id === object.id) ?? null;
-  const animated = track !== null && !hasInstances;
+  const animated =
+    track !== null && !hasInstances && object.freezeMotion !== true;
 
-  const setGroup = useCallback((node: THREE.Group | null) => {
-    groupRef.current = node;
-    setGroupNode(node);
+  const setAnchor = useCallback((node: THREE.Group | null) => {
+    anchorRef.current = node;
+    setAnchorNode(node);
   }, []);
+
+  // Park the anchor wherever the part is drawn: one instance's pose for a
+  // repeated component, the component pose otherwise.
+  const activeInstancePose =
+    object.activeInstanceIndex !== undefined && object.activeInstanceIndex >= 0
+      ? object.instances[object.activeInstanceIndex]
+      : undefined;
+  const anchorPosition: [number, number, number] =
+    activeInstancePose?.position ?? object.position;
+  const anchorPositionRef = useRef(anchorPosition);
+  anchorPositionRef.current = anchorPosition;
 
   useEffect(() => {
-    if (!showGizmo) {
-      groupRef.current?.position.set(0, 0, 0);
-      rotateRef.current?.rotation.set(0, 0, 0);
-    }
-  }, [showGizmo]);
-
-  const setRotate = useCallback((node: THREE.Group | null) => {
-    rotateRef.current = node;
-    setRotateNode(node);
-  }, []);
-
-  const pivotPosition: [number, number, number] = object.position;
+    const node = anchorRef.current;
+    // A drag owns the anchor for its duration: writing the prop back in would
+    // zero the rotation (or drag the arrows with the part) mid-gesture.
+    if (node === null || dragRef.current) return;
+    node.position.set(anchorPosition[0], anchorPosition[1], anchorPosition[2]);
+    node.rotation.set(0, 0, 0);
+  }, [anchorPosition[0], anchorPosition[1], anchorPosition[2], showGizmo]);
 
   // The parsed mesh is already centered on its own bbox, so its bounding box
   // is the part's true envelope — report it for the DRO and placement tools.
@@ -403,23 +416,10 @@ function SelectableObject({
     <>
       {hasInstances ? (
         /* Repeated component: one group per instance so a single screw can be
-         * dragged without dragging its siblings. The gizmo attaches to the
-         * active instance's group only. */
+         * dragged without dragging its siblings. */
         <>
           {object.instances.map((pose, index) => (
-            <group
-              key={`${object.id}:${index}`}
-              ref={
-                index === activeIndex
-                  ? (node: THREE.Group | null) => {
-                      if (groupRef.current !== node) {
-                        groupRef.current = node;
-                        setGroupNode(node);
-                      }
-                    }
-                  : undefined
-              }
-            >
+            <group key={`${object.id}:${index}`}>
               <StlModel
                 url={object.url}
                 onStatus={onPreviewStatus}
@@ -440,7 +440,7 @@ function SelectableObject({
           ))}
         </>
       ) : (
-        <group ref={setGroup}>
+        <group>
           <MotionPose track={animated ? track : null} clock={clock} playhead={playhead}>
             <StlModel
               url={object.url}
@@ -462,48 +462,66 @@ function SelectableObject({
         </group>
       )}
 
-      {showGizmo && gizmoMode === "rotate" ? (
-        <group ref={setRotate} position={pivotPosition} />
+      {showGizmo ? (
+        <group
+          ref={setAnchor}
+          position={anchorPosition}
+          userData={{ cgenGizmo: true }}
+        />
       ) : null}
 
-      {showGizmo && gizmoMode === "translate" && groupNode ? (
+      {showGizmo && gizmoMode === "translate" && anchorNode ? (
         <TransformControls
-          object={groupNode}
+          object={anchorNode}
           mode="translate"
           size={0.85}
           onMouseDown={() => {
             dragRef.current = true;
+            const node = anchorRef.current;
+            anchorBaseRef.current = node
+              ? [node.position.x, node.position.y, node.position.z]
+              : [0, 0, 0];
             onOrbitEnabledChange?.(false);
             onMoveStart?.();
           }}
           onMouseUp={() => {
-            const g = groupRef.current;
-            const delta: [number, number, number] = g
-              ? [g.position.x, g.position.y, g.position.z]
+            const node = anchorRef.current;
+            const base = anchorBaseRef.current;
+            const delta: [number, number, number] = node
+              ? [
+                  node.position.x - base[0],
+                  node.position.y - base[1],
+                  node.position.z - base[2],
+                ]
               : [0, 0, 0];
             dragRef.current = false;
             onOrbitEnabledChange?.(true);
-            // Commit the final gizmo delta while it is still non-zero, then
-            // release the group. The parent bakes the new absolute pose into
-            // the draft, so the mesh stays where it was dropped.
+            // Commit the final delta while it is still non-zero, then park the
+            // anchor on the part again. The parent bakes the new absolute pose
+            // into the draft, so the part stays where it was dropped.
             if (delta[0] !== 0 || delta[1] !== 0 || delta[2] !== 0) {
               onMoveDelta?.(delta);
             }
-            groupNode.position.set(0, 0, 0);
+            node?.position.set(base[0], base[1], base[2]);
             onMoveEnd?.();
           }}
           onObjectChange={() => {
             if (!dragRef.current || !onMoveDelta) return;
-            const g = groupRef.current;
-            if (!g) return;
-            onMoveDelta([g.position.x, g.position.y, g.position.z]);
+            const node = anchorRef.current;
+            if (!node) return;
+            const base = anchorBaseRef.current;
+            onMoveDelta([
+              node.position.x - base[0],
+              node.position.y - base[1],
+              node.position.z - base[2],
+            ]);
           }}
         />
       ) : null}
 
-      {showGizmo && gizmoMode === "rotate" && rotateNode ? (
+      {showGizmo && gizmoMode === "rotate" && anchorNode ? (
         <TransformControls
-          object={rotateNode}
+          object={anchorNode}
           mode="rotate"
           size={0.95}
           onMouseDown={() => {
@@ -512,21 +530,27 @@ function SelectableObject({
             onRotateStart?.();
           }}
           onMouseUp={() => {
-            const g = rotateRef.current;
-            const delta = g ? eulerToDeg(g.rotation) : ([0, 0, 0] as [number, number, number]);
+            const node = anchorRef.current;
+            const delta = node
+              ? eulerToDeg(node.rotation)
+              : ([0, 0, 0] as [number, number, number]);
             dragRef.current = false;
             onOrbitEnabledChange?.(true);
             if (delta[0] !== 0 || delta[1] !== 0 || delta[2] !== 0) {
               onRotateDelta?.(delta);
             }
-            g?.rotation.set(0, 0, 0);
+            if (node) {
+              const rest = anchorPositionRef.current;
+              node.position.set(rest[0], rest[1], rest[2]);
+              node.rotation.set(0, 0, 0);
+            }
             onMoveEnd?.();
           }}
           onObjectChange={() => {
             if (!dragRef.current || !onRotateDelta) return;
-            const g = rotateRef.current;
-            if (!g) return;
-            onRotateDelta(eulerToDeg(g.rotation));
+            const node = anchorRef.current;
+            if (!node) return;
+            onRotateDelta(eulerToDeg(node.rotation));
           }}
         />
       ) : null}
@@ -556,6 +580,7 @@ function DragGroup({
   material,
   onScale,
   viewRequest,
+  projection,
   motion,
   clock,
   playhead,
@@ -588,6 +613,7 @@ function DragGroup({
   material: MaterialId;
   onScale: (maxDim: number) => void;
   viewRequest?: { id: number; view: ViewName } | null;
+  projection: "persp" | "ortho";
   motion?: SceneAnimation | null;
   clock: MotionClockRef;
   playhead: number;
@@ -637,6 +663,7 @@ function DragGroup({
         hasContent={hasContent}
         onScale={onScale}
         viewRequest={viewRequest}
+        projection={projection}
       />
     </group>
   );
@@ -887,6 +914,7 @@ export function CadViewport({
               material={material}
               onScale={handleScale}
               viewRequest={viewRequest}
+              projection={ortho ? "ortho" : "persp"}
               motion={animation}
               clock={clockRef}
               playhead={playhead}

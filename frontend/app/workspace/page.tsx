@@ -189,20 +189,21 @@ export default function Home() {
   // and lets the same viewport preview the animation.
   const [tool, setTool] = useState<"design" | "motion">("design");
   const [moving, setMoving] = useState(false);
-  const [moveOrigin, setMoveOrigin] = useState<{
+  // Gizmo callbacks fire several times per frame and the drag origin must be
+  // readable synchronously, so it lives in a ref rather than in state.
+  const moveOriginRef = useRef<{
     position: [number, number, number];
     instances: Array<{
       position: [number, number, number];
       rotation: [number, number, number];
     }>;
   } | null>(null);
-  // Gizmo callbacks fire within one animation frame, before React commits the
-  // `moveOrigin` state update. The ref is the synchronous read path so the
-  // final delta of a drag is never dropped and the object never snaps back.
-  const moveOriginRef = useRef(moveOrigin);
-  useEffect(() => {
-    moveOriginRef.current = moveOrigin;
-  }, [moveOrigin]);
+  // Final pose of the part being dragged, written synchronously during the
+  // drag so the drop can key it (React state is one frame behind the gizmo).
+  const lastDragPoseRef = useRef<{
+    position: [number, number, number];
+    rotation: [number, number, number];
+  } | null>(null);
   // Sibling origins for grouped objects that travel with the gizmo target.
   const groupMoveOriginsRef = useRef<
     Record<
@@ -365,32 +366,6 @@ export default function Home() {
     return JSON.stringify(draftInstances) !== JSON.stringify(selectedBase.instances);
   }, [selectedBase, draftInstances]);
 
-  const placementDirty = useMemo(() => {
-    if (selectedBase === null) return false;
-    const visChanged = Object.prototype.hasOwnProperty.call(
-      visibilityDraft,
-      selectedBase.id,
-    );
-    return (
-      draftName !== selectedBase.name ||
-      draftPosition[0] !== selectedBase.transform.position[0] ||
-      draftPosition[1] !== selectedBase.transform.position[1] ||
-      draftPosition[2] !== selectedBase.transform.position[2] ||
-      draftRotation[0] !== selectedBase.transform.rotation[0] ||
-      draftRotation[1] !== selectedBase.transform.rotation[1] ||
-      draftRotation[2] !== selectedBase.transform.rotation[2] ||
-      instancesDirty ||
-      visChanged
-    );
-  }, [
-    selectedBase,
-    draftName,
-    draftPosition,
-    draftRotation,
-    instancesDirty,
-    visibilityDraft,
-  ]);
-
   const paramsDirty = useMemo(() => {
     if (selectedBase === null) return false;
     return JSON.stringify(draftParams) !== JSON.stringify(selectedBase.parameters);
@@ -449,18 +424,68 @@ export default function Home() {
     [activeTrack, playhead],
   );
 
+  // An animated part is compared against the pose drawn on screen (the track
+  // sample), not against the stored pose the animation overrides.
+  const placementDirty = useMemo(() => {
+    if (selectedBase === null) return false;
+    const visChanged = Object.prototype.hasOwnProperty.call(
+      visibilityDraft,
+      selectedBase.id,
+    );
+    const base = activeTrack !== null && animatedPose !== null
+      ? animatedPose
+      : selectedBase.transform;
+    return (
+      draftName !== selectedBase.name ||
+      draftPosition[0] !== base.position[0] ||
+      draftPosition[1] !== base.position[1] ||
+      draftPosition[2] !== base.position[2] ||
+      draftRotation[0] !== base.rotation[0] ||
+      draftRotation[1] !== base.rotation[1] ||
+      draftRotation[2] !== base.rotation[2] ||
+      instancesDirty ||
+      visChanged
+    );
+  }, [
+    selectedBase,
+    activeTrack,
+    animatedPose,
+    draftName,
+    draftPosition,
+    draftRotation,
+    instancesDirty,
+    visibilityDraft,
+  ]);
+
+  // Keep a keyed part's draft equal to the pose on screen as the playhead
+  // moves, so the inspector numbers never describe a pose the user cannot see.
+  // An edit changes the draft without changing the sample, so it survives.
+  useEffect(() => {
+    if (activeSelectedId === null || animatedPose === null) return;
+    if (playing || moving) return;
+    setDraftPosition([...animatedPose.position]);
+    setDraftRotation([...animatedPose.rotation]);
+  }, [activeSelectedId, animatedPose, playing, moving]);
+
   const handleMoveStart = useCallback(() => {
     if (selectedObject === null) return;
     setMoving(true);
+    // An animated part is drawn at its sampled pose, so the drag has to start
+    // there: the gizmo delta is applied on top of what the user can see.
+    const startPosition = animatedPose?.position ?? draftPosition;
+    const startRotation = animatedPose?.rotation ?? draftRotation;
+    if (animatedPose !== null) {
+      setDraftPosition([...startPosition] as [number, number, number]);
+      setDraftRotation([...startRotation] as [number, number, number]);
+    }
     const origin = {
-      position: [...draftPosition] as [number, number, number],
+      position: [...startPosition] as [number, number, number],
       instances: draftInstances.map((inst) => ({
         position: [...inst.position] as [number, number, number],
         rotation: [...inst.rotation] as [number, number, number],
       })),
     };
     moveOriginRef.current = origin;
-    setMoveOrigin(origin);
     const spec = displayResult?.specification;
     const companions: typeof groupMoveOriginsRef.current = {};
     if (spec && activeSelectedId !== null) {
@@ -481,7 +506,9 @@ export default function Home() {
     groupMoveOriginsRef.current = companions;
   }, [
     selectedObject,
+    animatedPose,
     draftPosition,
+    draftRotation,
     draftInstances,
     displayResult,
     activeSelectedId,
@@ -530,6 +557,10 @@ export default function Home() {
         origin.position[2] + delta[2],
       ];
       setDraftPosition(nextPosition);
+      lastDragPoseRef.current = {
+        position: nextPosition,
+        rotation: [...draftRotation],
+      };
       const nextInstances =
         origin.instances.length > 0
           ? origin.instances.map((inst) => ({
@@ -571,12 +602,12 @@ export default function Home() {
         });
       }
     },
-    [activeSelectedId, rememberPlacement, snapMm],
+    [activeSelectedId, draftRotation, rememberPlacement, snapMm],
   );
 
   const handleMoveEnd = useCallback(() => {
     setMoving(false);
-    setMoveOrigin(null);
+    moveOriginRef.current = null;
     groupMoveOriginsRef.current = {};
     rotateSnapshotRef.current = null;
   }, []);
@@ -595,9 +626,15 @@ export default function Home() {
     for (const id of ids) {
       const object = objects.find((item) => item.id === id);
       if (object === undefined || object.locked) continue;
+      // The selected part rotates from the pose on screen; companions from
+      // their placed pose.
+      const visiblePose =
+        id === activeSelectedId && animatedPose !== null
+          ? animatedPose
+          : object.transform;
       poses[id] = {
-        position: [...object.transform.position] as Vec3,
-        rotation: [...object.transform.rotation] as Vec3,
+        position: [...visiblePose.position] as Vec3,
+        rotation: [...visiblePose.rotation] as Vec3,
         instances: object.instances.map((inst) => ({
           position: [...inst.position] as Vec3,
           rotation: [...inst.rotation] as Vec3,
@@ -613,7 +650,7 @@ export default function Home() {
       pivot: poses[primaryId].position,
       poses,
     };
-  }, [selectedIds, activeSelectedId, displayResult, objects]);
+  }, [selectedIds, activeSelectedId, animatedPose, displayResult, objects]);
 
   const handleRotateDelta = useCallback(
     (delta: [number, number, number]) => {
@@ -634,6 +671,10 @@ export default function Home() {
           setDraftPosition(next.position);
           setDraftRotation(next.rotation);
           if (nextInstances.length > 0) setDraftInstances(nextInstances);
+          lastDragPoseRef.current = {
+            position: next.position,
+            rotation: next.rotation,
+          };
         }
       }
     },
@@ -656,17 +697,24 @@ export default function Home() {
 
   const hydrateDrafts = useCallback((object: SceneObject) => {
     setMoving(false);
-    setMoveOrigin(null);
+    moveOriginRef.current = null;
+    // A part with a track is drawn at its sampled pose, so the editor starts
+    // from that pose — editing a field then changes what is on screen, and a
+    // key taken without editing never jumps.
+    const spec = visible?.response.specification;
+    const track = spec === undefined ? null : trackFor(spec, object.id);
+    const shownPose =
+      track === null ? object.transform : sampleTrack(track, playhead);
     setDraftName(object.name);
     setDraftPosition([
-      object.transform.position[0],
-      object.transform.position[1],
-      object.transform.position[2],
+      shownPose.position[0],
+      shownPose.position[1],
+      shownPose.position[2],
     ]);
     setDraftRotation([
-      object.transform.rotation[0],
-      object.transform.rotation[1],
-      object.transform.rotation[2],
+      shownPose.rotation[0],
+      shownPose.rotation[1],
+      shownPose.rotation[2],
     ]);
     setDraftParams({ ...object.parameters });
     setDraftInstances(
@@ -675,7 +723,7 @@ export default function Home() {
         rotation: [...inst.rotation] as [number, number, number],
       })),
     );
-  }, []);
+  }, [visible, playhead]);
 
   const handleSelectObject = useCallback(
     (id: string | null, instanceIndex = -1, additive = false) => {
@@ -975,23 +1023,33 @@ export default function Home() {
     });
   }, [objects]);
 
-  /** Commit a whole response locally: no rebuild, no new meshes. */
+  /** Commit a whole response locally: no rebuild, no new meshes.
+   *  `keepDrafts` is for writes that already contain the displayed pose (motion
+   *  keys, timing): dropping the drafts there would undo the edit on screen. */
   const commitResponsePatch = useCallback(
-    (label: string, next: GenerateResponse) => {
+    (label: string, next: GenerateResponse, keepDrafts = false) => {
       setProject((p) => appendRevision(p, "assemble", label, next));
       setGenerateError(null);
-      clearDrafts();
+      if (!keepDrafts) clearDrafts();
     },
     [clearDrafts],
   );
 
   const commitSpecPatch = useCallback(
-    (label: string, next: ReturnType<typeof groupSelection>) => {
+    (
+      label: string,
+      next: ReturnType<typeof groupSelection>,
+      keepDrafts = false,
+    ) => {
       if (next === null || visible === null) return;
       // Groups, locks and placement fixes are scene handles, not a boolean
       // merge and not a CAD rebuild. Keep the current files; only the
       // specification changes.
-      commitResponsePatch(label, { ...visible.response, specification: next });
+      commitResponsePatch(
+        label,
+        { ...visible.response, specification: next },
+        keepDrafts,
+      );
     },
     [visible, commitResponsePatch],
   );
@@ -1219,7 +1277,7 @@ export default function Home() {
       if (visible === null) return;
       const spec = sceneSpec();
       if (spec === null) return;
-      commitSpecPatch(label, withTrack(spec, next));
+      commitSpecPatch(label, withTrack(spec, next), true);
     },
     [visible, sceneSpec, commitSpecPatch],
   );
@@ -1316,11 +1374,25 @@ export default function Home() {
       if (visible === null || !Number.isFinite(duration)) return;
       const spec = sceneSpec();
       if (spec === null) return;
-      commitSpecPatch("Motion length", setAnimationDuration(spec, duration));
+      commitSpecPatch("Motion length", setAnimationDuration(spec, duration), true);
       setPlayhead((value) => Math.min(value, Math.max(0.2, duration)));
     },
     [visible, sceneSpec, commitSpecPatch],
   );
+
+  // Dropping a part that already has a track keys the pose it was dropped at:
+  // otherwise the mesh springs back to its sampled pose on release and the
+  // drag looks like it did nothing.
+  const wasMovingRef = useRef(false);
+  useEffect(() => {
+    const dropped = wasMovingRef.current && !moving;
+    wasMovingRef.current = moving;
+    if (!dropped) return;
+    const pose = lastDragPoseRef.current;
+    lastDragPoseRef.current = null;
+    if (pose === null || activeTrack === null) return;
+    writeTrack(keyAt(activeTrack, playhead, pose), "Key");
+  }, [moving, activeTrack, playhead, writeTrack]);
 
   const handleTogglePlay = useCallback(() => {
     if (!hasMotion) return;
@@ -1654,21 +1726,24 @@ export default function Home() {
           <CadViewport
             objects={objects.map((object) => {
               const isSel = object.id === activeSelectedId;
-              // While the gizmo drags, the attached group holds the live
-              // offset. Freeze the mesh at the drag origin for that frame; the
-              // final pose is already in the object's draft.
-              const frozen = isSel && moving ? moveOrigin : null;
+              const dragging = isSel && moving;
+              // An animated part is drawn at its sampled pose, so that is where
+              // its gizmo has to sit too — except while it is being dragged,
+              // when the draft is what is on screen.
+              const shown =
+                isSel && !dragging && animatedPose !== null ? animatedPose : null;
               return {
                 id: object.id,
                 url: object.stlUrl ?? "",
-                position:
-                  frozen === null ? object.transform.position : frozen.position,
-                rotation:
-                  frozen === null ? object.transform.rotation : draftRotation,
+                position: shown?.position ?? object.transform.position,
+                rotation: shown?.rotation ?? object.transform.rotation,
                 visible: object.visible && Boolean(object.stlUrl),
                 selected: isSel || selectedIds.includes(object.id),
                 gizmo: isSel,
-                instances: frozen === null ? object.instances : frozen.instances,
+                // A dragged animated part follows the gizmo instead of its
+                // track; on release the drop is keyed at the playhead.
+                freezeMotion: dragging,
+                instances: object.instances,
                 activeInstanceIndex: isSel ? selectedInstance : -1,
                 recenter:
                   displayResult !== null &&
@@ -1700,10 +1775,11 @@ export default function Home() {
             onSelectObject={handleSelectObject}
             liveScale={liveScale}
             canDrag={
+              // A part that is already animated must stay draggable: dragging
+              // records a key at the playhead instead of dropping the gizmo.
               !busy &&
               activeSelectedId !== null &&
-              selectedObject?.locked !== true &&
-              activeTrack === null
+              selectedObject?.locked !== true
             }
             onMoveStart={handleMoveStart}
             onMoveDelta={handleMoveDelta}

@@ -58,7 +58,10 @@ Next.js 16 + React 19 + R3F + Firebase. Routes: `/` landing,
   `GenerateResponse` (spec + URLs) — specs survive, file links expire.
 - Viewer: `components/cad/CadViewport.tsx + StlModel.tsx`. Per-object STL
   fetch→parse→recenter; `TransformControls` translate/rotate; selection color;
-  reframe on first-load / 1.5× change / reset only. Bridge:
+  reframe on first-load / 1.5× change / reset only. The gizmo drives an anchor
+  node parked on the part and reports deltas from where the drag started, so
+  the arrows sit on the part rather than at the world origin and the mesh is
+  moved by the editor's drafts, not by the gizmo. Bridge:
   `lib/assembly.ts:sceneObjects()`.
 - Coordinates: CAD is Z-up and three.js is Y-up, so the whole scene renders
   inside a `rotation={[-π/2,0,0]}` wrapper. Stored transforms therefore stay in
@@ -66,14 +69,19 @@ Next.js 16 + React 19 + R3F + Firebase. Routes: `/` landing,
   rotations use Euler order `ZYX`, which is the backend's X→Y→Z composition.
   The well shows a live DRO (pos/rot/size) and an origin axis cross; front /
   top / right / iso views and a perspective↔orthographic switch drive
-  `FrameCamera`. `iso` is the default bench view: it looks down CAD −Z with
-  CAD +Y up the screen (`VIEW_UP`), so flat parts read face-on.
+  `FrameCamera`. `iso` is the default three-quarter view: CAD +Y runs up the
+  screen (`VIEW_UP`), so parts stand upright with the gap between the camera
+  and the model kept at 1.9× the fitting distance. The camera is only placed
+  on first load, a large size change, Reset, a view button or a projection
+  swap — never on a canvas resize, so the user's orbit holds still.
 - Animated parts: `assembly.animation` (schema 4.1, optional) holds per-component
   keyframes. `MotionPose` samples them on the render loop, so playback costs no
   React renders; the clock is only mirrored into state ~10 Hz for the timeline
   playhead. `components/Timeline.tsx` is the motion view (`tool === "motion"` in
   the workspace page): rows come from the placed objects, keys from the tracks,
   and every edit goes through `withTrack` / `keyAt` / `retimeKey` / `withoutKey`.
+  An animated part stays draggable: the drag runs on its sampled pose and the
+  drop keys it at the playhead (`freezeMotion` shows the draft while dragging).
   Animation never reaches the engine — exports use the stored transforms.
 - Measure: two clicks on the model give a distance chip plus CAD-axis deltas;
   `MeasureOverlay` is drawn in world space, so no scene-graph changes.

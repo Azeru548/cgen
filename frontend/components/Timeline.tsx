@@ -244,8 +244,8 @@ export function Timeline({
             : selectedRow === null
               ? "Pick a part, give it a pose, then press Key here."
               : selectedRow.track === null
-                ? "Press Key here to record this part's pose at the playhead."
-                : "Edit the pose in the inspector, then Key here. Drag a diamond to retime it, double-click to delete."}
+                ? "Press + Key to record this part's pose at the playhead."
+                : "Move the part in the viewport (or edit the inspector) to key it here. Drag a diamond to retime, double-click to delete."}
         </p>
       </div>
 
@@ -281,6 +281,21 @@ export function Timeline({
                       : "fixed"}
                 </span>
               </button>
+              {row.animatable ? (
+                /* The key button has to survive the first key: a track is not a
+                   one-shot, and losing the button is how a part gets stuck with
+                   a single keyframe. */
+                <button
+                  type="button"
+                  className="timeline-name-add"
+                  onClick={() => onAddKey(row.id)}
+                  disabled={busy}
+                  title={`Record ${row.name}'s pose at the playhead`}
+                  aria-label={`Key ${row.name} at the playhead`}
+                >
+                  + Key
+                </button>
+              ) : null}
               {row.track !== null ? (
                 <button
                   type="button"
@@ -372,18 +387,6 @@ export function Timeline({
                     />
                   );
                 })}
-                {row.animatable && row.track === null ? (
-                  <button
-                    type="button"
-                    className="timeline-key-add"
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={() => onAddKey(row.id)}
-                    disabled={busy}
-                    title={`Record ${row.name}'s pose at the playhead`}
-                  >
-                    + Key
-                  </button>
-                ) : null}
               </div>
             );
           })}
