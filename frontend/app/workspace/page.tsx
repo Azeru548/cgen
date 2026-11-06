@@ -10,8 +10,8 @@ import { Bom } from "@/components/Bom";
 import { ComponentBrowser } from "@/components/ComponentBrowser";
 import { Inspector } from "@/components/Inspector";
 import { ObjectInspector } from "@/components/ObjectInspector";
-import { MotionPanel } from "@/components/MotionPanel";
 import { ParametricPanel } from "@/components/ParametricPanel";
+import { Timeline, type TimelineRow } from "@/components/Timeline";
 import { WorkspaceHome } from "@/components/WorkspaceHome";
 import { AccountChip } from "@/components/AccountChip";
 import { useFirestore } from "@/components/AuthProvider";
@@ -43,6 +43,7 @@ import {
   isPartSpec,
   placedBounds,
   removeComponentFromResponse,
+  retimeKey,
   sampleTrack,
   sceneObjects,
   setAnimationDuration,
@@ -184,6 +185,9 @@ export default function Home() {
   const [snapMm, setSnapMm] = useState(0);
   const [playhead, setPlayhead] = useState(0);
   const [playing, setPlaying] = useState(false);
+  // Design is the ordinary workspace; Motion swaps the prompt for the timeline
+  // and lets the same viewport preview the animation.
+  const [tool, setTool] = useState<"design" | "motion">("design");
   const [moving, setMoving] = useState(false);
   const [moveOrigin, setMoveOrigin] = useState<{
     position: [number, number, number];
@@ -424,6 +428,26 @@ export default function Home() {
       return next;
     });
   }, []);
+
+  // --- Motion (viewer-only keyframes) ---------------------------------------
+
+  const activeTrack = useMemo<MotionTrack | null>(() => {
+    const spec = visible?.response.specification;
+    if (spec === undefined || activeSelectedId === null) return null;
+    return trackFor(spec, activeSelectedId);
+  }, [visible, activeSelectedId]);
+
+  const sceneAnimation =
+    visible !== null &&
+    visible.response.specification.document_type === "3d_assembly"
+      ? visible.response.specification.animation ?? null
+      : null;
+  const motionDuration = sceneAnimation?.duration ?? DEFAULT_MOTION_DURATION;
+
+  const animatedPose = useMemo(
+    () => (activeTrack === null ? null : sampleTrack(activeTrack, playhead)),
+    [activeTrack, playhead],
+  );
 
   const handleMoveStart = useCallback(() => {
     if (selectedObject === null) return;
@@ -1149,24 +1173,34 @@ export default function Home() {
         }
         return;
       }
-      const next: [number, number, number] = [...draftPosition];
+      // An animated part is drawn at its sampled pose, so an edit starts from
+      // that pose rather than from the stored one the user cannot see.
+      const base = animatedPose?.position ?? draftPosition;
+      const next: [number, number, number] = [base[0], base[1], base[2]];
       next[axis] = value;
       setDraftPosition(next);
       if (activeId !== null) rememberPlacement(activeId, { position: next });
     },
-    [activeSelectedId, draftInstances, draftPosition, rememberPlacement],
+    [
+      activeSelectedId,
+      animatedPose,
+      draftInstances,
+      draftPosition,
+      rememberPlacement,
+    ],
   );
 
   const handleEditRotation = useCallback(
     (axis: 0 | 1 | 2, value: number) => {
-      const next: [number, number, number] = [...draftRotation];
+      const base = animatedPose?.rotation ?? draftRotation;
+      const next: [number, number, number] = [base[0], base[1], base[2]];
       next[axis] = value;
       setDraftRotation(next);
       if (activeSelectedId !== null) {
         rememberPlacement(activeSelectedId, { rotation: next });
       }
     },
-    [activeSelectedId, draftRotation, rememberPlacement],
+    [activeSelectedId, animatedPose, draftRotation, rememberPlacement],
   );
 
   const handleNameChange = useCallback(
@@ -1179,25 +1213,6 @@ export default function Home() {
     [activeSelectedId, rememberPlacement],
   );
 
-  // --- Motion (viewer-only keyframes) ---------------------------------------
-
-  const activeTrack = useMemo<MotionTrack | null>(() => {
-    const spec = visible?.response.specification;
-    if (spec === undefined || activeSelectedId === null) return null;
-    return trackFor(spec, activeSelectedId);
-  }, [visible, activeSelectedId]);
-
-  const sceneAnimation =
-    visible !== null &&
-    visible.response.specification.document_type === "3d_assembly"
-      ? visible.response.specification.animation ?? null
-      : null;
-  const motionDuration = sceneAnimation?.duration ?? DEFAULT_MOTION_DURATION;
-
-  const animatedPose = useMemo(
-    () => (activeTrack === null ? null : sampleTrack(activeTrack, playhead)),
-    [activeTrack, playhead],
-  );
 
   const writeTrack = useCallback(
     (next: MotionTrack | null, label: string) => {
@@ -1209,57 +1224,92 @@ export default function Home() {
     [visible, sceneSpec, commitSpecPatch],
   );
 
-  const handleAddKey = useCallback(() => {
-    if (activeSelectedId === null) return;
-    const track: MotionTrack = activeTrack ?? {
-      component_id: activeSelectedId,
-      keys: [],
-      loop: true,
-    };
-    const next = keyAt(track, playhead, {
-      position: shownPosition,
-      rotation: draftRotation,
-    });
-    writeTrack(next, activeTrack === null ? "Animate" : "Key");
-  }, [
-    activeSelectedId,
-    activeTrack,
-    playhead,
-    shownPosition,
-    draftRotation,
-    writeTrack,
-  ]);
+  const hasMotion = sceneAnimation !== null && sceneAnimation.tracks.length > 0;
 
-  const handleRemoveKey = useCallback(
-    (index: number) => {
-      if (activeTrack === null) return;
-      const next = withoutKey(activeTrack, index);
-      writeTrack(next.keys.length === 0 ? null : next, "Delete key");
+  /** Timeline rows: every placed part, with its track (if any). */
+  const motionRows = useMemo<TimelineRow[]>(() => {
+    return objects.map((object) => ({
+      id: object.id,
+      name: object.name,
+      track:
+        sceneAnimation?.tracks.find(
+          (track) => track.component_id === object.id,
+        ) ?? null,
+      animatable: object.instances.length <= 1 && !object.locked,
+    }));
+  }, [objects, sceneAnimation]);
+
+  /** Pose a key records: the selected part's editable pose, else its placed
+   *  pose. Kept independent of the animation so a key can be authored from
+   *  any row, not only from the running preview. */
+  const poseFor = useCallback(
+    (id: string) => {
+      if (id === activeSelectedId) {
+        return { position: shownPosition, rotation: draftRotation };
+      }
+      const object = objects.find((item) => item.id === id);
+      if (object === undefined) return null;
+      return {
+        position: object.transform.position,
+        rotation: object.transform.rotation,
+      };
     },
-    [activeTrack, writeTrack],
+    [activeSelectedId, objects, shownPosition, draftRotation],
   );
 
-  const handleToggleTrack = useCallback(() => {
-    if (activeSelectedId === null) return;
-    if (activeTrack !== null) {
-      writeTrack(null, "Clear motion");
+  const handleTimelineKey = useCallback(
+    (id: string) => {
+      const pose = poseFor(id);
+      if (pose === null) return;
+      const spec = sceneSpec();
+      if (spec === null) return;
+      const existing = trackFor(spec, id);
+      const track: MotionTrack = existing ?? {
+        component_id: id,
+        keys: [],
+        loop: true,
+      };
+      writeTrack(keyAt(track, playhead, pose), existing === null ? "Animate" : "Key");
+    },
+    [poseFor, sceneSpec, playhead, writeTrack],
+  );
+
+  const handleTimelineRemoveKey = useCallback(
+    (id: string, index: number) => {
+      const spec = sceneSpec();
+      if (spec === null) return;
+      const track = trackFor(spec, id);
+      if (track === null) return;
+      const next = withoutKey(track, index);
+      writeTrack(next.keys.length === 0 ? null : next, "Delete key");
+    },
+    [sceneSpec, writeTrack],
+  );
+
+  const handleTimelineMoveKey = useCallback(
+    (id: string, index: number, time: number) => {
+      const spec = sceneSpec();
+      if (spec === null) return;
+      const track = trackFor(spec, id);
+      if (track === null) return;
+      writeTrack(
+        retimeKey(track, index, Math.min(time, motionDuration)),
+        "Move key",
+      );
+    },
+    [sceneSpec, motionDuration, writeTrack],
+  );
+
+  const handleClearTrack = useCallback(
+    (id: string) => {
+      const spec = sceneSpec();
+      if (spec === null) return;
+      writeTrack({ component_id: id, keys: [], loop: true }, "Clear motion");
       setPlaying(false);
       setPlayhead(0);
-      return;
-    }
-    const next = keyAt(
-      { component_id: activeSelectedId, keys: [], loop: true },
-      0,
-      { position: shownPosition, rotation: draftRotation },
-    );
-    writeTrack(next, "Animate");
-  }, [
-    activeSelectedId,
-    activeTrack,
-    shownPosition,
-    draftRotation,
-    writeTrack,
-  ]);
+    },
+    [sceneSpec, writeTrack],
+  );
 
   const handleDuration = useCallback(
     (duration: number) => {
@@ -1272,13 +1322,18 @@ export default function Home() {
     [visible, sceneSpec, commitSpecPatch],
   );
 
-  const handlePlay = useCallback(() => {
-    if (activeTrack === null) return;
+  const handleTogglePlay = useCallback(() => {
+    if (!hasMotion) return;
     setPlaying((value) => {
       if (!value && playhead >= motionDuration - 0.05) setPlayhead(0);
       return !value;
     });
-  }, [activeTrack, playhead, motionDuration]);
+  }, [hasMotion, playhead, motionDuration]);
+
+  const handleStop = useCallback(() => {
+    setPlaying(false);
+    setPlayhead(0);
+  }, []);
 
   const handleApplyPlacement = useCallback(() => {
     if (visible === null || activeSelectedId === null) return;
@@ -1541,6 +1596,30 @@ export default function Home() {
           />
         </button>
 
+        <div className="view-switch" role="group" aria-label="Workspace view">
+          <button
+            type="button"
+            className={`view-switch-option${tool === "design" ? " is-active" : ""}`}
+            onClick={() => {
+              setTool("design");
+              setPlaying(false);
+            }}
+            aria-pressed={tool === "design"}
+            title="Arrange and inspect the model"
+          >
+            Design
+          </button>
+          <button
+            type="button"
+            className={`view-switch-option${tool === "motion" ? " is-active" : ""}`}
+            onClick={() => setTool("motion")}
+            aria-pressed={tool === "motion"}
+            title="Animate parts on a timeline"
+          >
+            Motion
+          </button>
+        </div>
+
         <span className="topbar-spacer" />
 
         <AccountChip />
@@ -1571,7 +1650,7 @@ export default function Home() {
             onAdd={handleAddComponent}
           />
         </aside>
-        <div className="workspace-main">
+        <div className="workspace-main" data-mode={tool}>
           <CadViewport
             objects={objects.map((object) => {
               const isSel = object.id === activeSelectedId;
@@ -1632,6 +1711,29 @@ export default function Home() {
             onRotateDelta={handleRotateDelta}
             onMoveEnd={handleMoveEnd}
           />
+
+          {tool === "motion" ? (
+            <Timeline
+              rows={motionRows}
+              selectedId={activeSelectedId}
+              duration={motionDuration}
+              playhead={playhead}
+              playing={playing}
+              busy={busy}
+              onTogglePlay={handleTogglePlay}
+              onStop={handleStop}
+              onScrub={(time) => {
+                setPlaying(false);
+                setPlayhead(time);
+              }}
+              onDuration={handleDuration}
+              onSelect={(id) => handleTreeSelect(id, false)}
+              onAddKey={handleTimelineKey}
+              onRemoveKey={handleTimelineRemoveKey}
+              onMoveKey={handleTimelineMoveKey}
+              onClearTrack={handleClearTrack}
+            />
+          ) : null}
 
           <div className="prompt-bar">
             {status === "error" && generateError ? (
@@ -1738,8 +1840,8 @@ export default function Home() {
                   object={selectedObject}
                   catalog={catalog}
                   draftName={draftName}
-                  draftPosition={shownPosition}
-                  draftRotation={draftRotation}
+                  draftPosition={animatedPose?.position ?? shownPosition}
+                  draftRotation={animatedPose?.rotation ?? draftRotation}
                   draftParams={draftParams}
                   placementDirty={placementDirty}
                   paramsDirty={paramsDirty}
@@ -1761,27 +1863,6 @@ export default function Home() {
                   }
                   onApplyPlacement={handleApplyPlacement}
                   onApplyParams={handleApplyParams}
-                />
-                <MotionPanel
-                  track={activeTrack}
-                  duration={motionDuration}
-                  playhead={playhead}
-                  playing={playing}
-                  canAnimate={
-                    selectedObject !== null &&
-                    selectedObject.instances.length <= 1 &&
-                    !selectedObject.locked
-                  }
-                  busy={busy}
-                  onPlay={handlePlay}
-                  onScrub={(time) => {
-                    setPlaying(false);
-                    setPlayhead(time);
-                  }}
-                  onAddKey={handleAddKey}
-                  onRemoveKey={handleRemoveKey}
-                  onToggleTrack={handleToggleTrack}
-                  onDuration={handleDuration}
                 />
               </>
             }

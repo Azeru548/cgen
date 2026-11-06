@@ -163,12 +163,26 @@ export type ViewName = "iso" | "front" | "top" | "right";
 
 /** Camera directions in **world** space (Y up). The scene is drawn inside a
  *  CAD→viewer wrapper, so CAD +Z is world +Y: `front` looks along CAD −Y and
- *  `top` looks down CAD −Z, exactly like a drawing's front/top views. */
+ *  `top` looks down CAD −Z, exactly like a drawing's front/top views.
+ *
+ *  `iso` is the default "bench" view: it looks down CAD −Z with CAD +Y up the
+ *  screen, so flat parts (boards, plates, PCBs) read face-on the way they do
+ *  on a bench instead of lying flat on the floor and needing a fix-up rotation
+ *  before they are useful. */
 export const VIEW_DIRECTIONS: Record<ViewName, [number, number, number]> = {
-  iso: [1, 0.62, 1],
+  iso: [0.4, 1, 0.6],
   front: [0, 0, 1],
   top: [0, 1, 0],
   right: [1, 0, 0],
+};
+
+/** Screen-up per view, in world space. Views that look down the CAD Z axis need
+ *  CAD +Y up the screen; straight-down views would degenerate, so they roll. */
+export const VIEW_UP: Record<ViewName, [number, number, number]> = {
+  iso: [0, 0, -1],
+  front: [0, 1, 0],
+  top: [0, 0, -1],
+  right: [0, 1, 0],
 };
 
 interface FrameCameraProps {
@@ -254,8 +268,7 @@ export function FrameCamera({
         perspective.updateProjectionMatrix();
         camera.position.copy(target.clone().addScaledVector(direction, distance));
       }
-      // Looking straight down needs a different up vector or lookAt degenerates.
-      camera.up.set(0, view === "top" ? 0 : 1, view === "top" ? -1 : 0);
+      camera.up.set(...VIEW_UP[view]);
       camera.lookAt(target);
       controls?.target.copy(target);
       controls?.update();

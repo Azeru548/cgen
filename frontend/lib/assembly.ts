@@ -660,6 +660,19 @@ export function withoutKey(track: MotionTrack, index: number): MotionTrack {
   return { ...track, keys: track.keys.filter((_, i) => i !== index) };
 }
 
+/** Move one key to a new time, keeping the list sorted. */
+export function retimeKey(
+  track: MotionTrack,
+  index: number,
+  time: number,
+): MotionTrack {
+  const key = track.keys[index];
+  if (key === undefined) return track;
+  const moved: MotionKey = { ...key, t: Math.max(0, time) };
+  const others = track.keys.filter((_, i) => i !== index);
+  return { ...track, keys: [...others, moved].sort((a, b) => a.t - b.t) };
+}
+
 /** Write one track into the scene (an empty key list removes the track). */
 export function withTrack(
   spec: AssemblySpecification,

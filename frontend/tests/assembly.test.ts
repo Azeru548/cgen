@@ -14,6 +14,7 @@ import {
   posesOf,
   promoteResponseToAssembly,
   removeComponentFromResponse,
+  retimeKey,
   rotateSelection,
   sampleTrack,
   sceneObjects,
@@ -421,6 +422,14 @@ describe("motion tracks", () => {
     const removed = withTrack(added, { ...track, keys: [] });
     expect(animationOf(removed)).toBeNull();
     expect(withoutKey(track, 0).keys).toHaveLength(1);
+  });
+
+  it("retimes a key in place and keeps the list sorted", () => {
+    const moved = retimeKey(track, 0, 3);
+    expect(moved.keys.map((key) => key.t)).toEqual([2, 3]);
+    // The pose travels with the key, not with the slot.
+    expect(moved.keys[1].position).toEqual([0, 0, 0]);
+    expect(retimeKey(track, 9, 1)).toBe(track);
   });
 
   it("clamps duration and drops keys past the new end", () => {

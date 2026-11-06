@@ -66,10 +66,14 @@ Next.js 16 + React 19 + R3F + Firebase. Routes: `/` landing,
   rotations use Euler order `ZYX`, which is the backend's X→Y→Z composition.
   The well shows a live DRO (pos/rot/size) and an origin axis cross; front /
   top / right / iso views and a perspective↔orthographic switch drive
-  `FrameCamera`.
+  `FrameCamera`. `iso` is the default bench view: it looks down CAD −Z with
+  CAD +Y up the screen (`VIEW_UP`), so flat parts read face-on.
 - Animated parts: `assembly.animation` (schema 4.1, optional) holds per-component
   keyframes. `MotionPose` samples them on the render loop, so playback costs no
-  React renders; the clock is only mirrored into state ~10 Hz for the scrub bar.
+  React renders; the clock is only mirrored into state ~10 Hz for the timeline
+  playhead. `components/Timeline.tsx` is the motion view (`tool === "motion"` in
+  the workspace page): rows come from the placed objects, keys from the tracks,
+  and every edit goes through `withTrack` / `keyAt` / `retimeKey` / `withoutKey`.
   Animation never reaches the engine — exports use the stored transforms.
 - Measure: two clicks on the model give a distance chip plus CAD-axis deltas;
   `MeasureOverlay` is drawn in world space, so no scene-graph changes.

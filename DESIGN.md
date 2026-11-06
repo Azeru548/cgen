@@ -78,7 +78,10 @@ Nameplates, revision items (active = signal border, no side-stripe), model libra
 - **Viewer** renders each component’s local STL at its transform. Repeated fasteners share one definition and N instance poses. Camera still frames on first load, reset, or a large size change only.
 - **Well instruments**: a live DRO (pos / rot / size, signal while dragging), an origin axis cross, standard views (Front / Top / Right / Iso) with a Persp/Ortho switch centred at the top, a snap switch (Free / 1 / 5 / 10 mm) beside Move/Rotate, and **Measure** — two clicks, then a mono distance chip with CAD-axis deltas.
 - **Placement quick actions**: Seat Z, Centre X, Centre Y, plus Align X/Y/Z when two or more parts are ticked (the active part is the datum). **Duplicate** copies the selected part beside itself, reusing its STL.
-- **Motion**: per-part keyframes with a scrub row, Length field, Key here, and a key list. Viewer-only metadata — the drawing and the exports never animate.
+- **Design / Motion switch** in the topbar. Design is the ordinary workspace; Motion swaps the prompt for the timeline and keeps the same well in view. Leaving Motion stops playback.
+- **Motion timeline** docks under the well: transport (back to start, Play/Pause, time readout), Length in seconds, a ruler you can scrub, one row per part on the left, one diamond per key on the right. Selecting a row selects the part; **+ Key** records that part's current pose at the playhead; a diamond drags to retime and double-clicks to delete; **×** on a row clears its track. The bar carries one sentence of instruction for the current row. Viewer-only metadata — the drawing and the exports never animate.
+- **Bench framing**: the default camera looks down CAD −Z with CAD +Y up the screen, so flat parts (boards, plates, PCBs) arrive face-on and usable. Front / Top / Right remain true drawing views.
+- **Never-clipping well controls**: the view bar wraps and docks top-right below 1240px; the bottom toolbar wraps upward into a second row instead of being cut off by the well edge.
 - **Bill of materials**: parts grouped by registry type, quantities count instances, one hairline table below the downloads.
 - **Single-part** documents (schema 3.3) still occupy the scene as one generated object so the tree stays available.
 

@@ -813,7 +813,11 @@ button { font: inherit; color: inherit; }
   z-index: 2;
   display: flex;
   align-items: stretch;
+  justify-content: center;
+  flex-wrap: wrap;
   gap: 0.4rem;
+  /* Never let the bar run off a narrow well and clip its last buttons. */
+  max-width: calc(100% - 2rem);
 }
 
 .viewport-mode {
@@ -962,6 +966,8 @@ button { font: inherit; color: inherit; }
   color: rgba(232, 234, 237, 0.35);
 }
 
+/* The toolbar row is bottom-anchored, so when the groups stop fitting they
+   wrap upward into a second row instead of being cut off by the well edge. */
 .viewport-toolbar {
   position: absolute;
   left: 0.95rem;
@@ -969,9 +975,10 @@ button { font: inherit; color: inherit; }
   bottom: 0.85rem;
   z-index: 2;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 0.6rem;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.6rem;
   pointer-events: none;
 }
 
@@ -979,14 +986,19 @@ button { font: inherit; color: inherit; }
 .viewport-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.45rem;
   min-width: 0;
 }
+
+.viewport-controls { flex: 1 1 auto; }
+.viewport-actions { flex: 0 0 auto; justify-content: flex-end; margin-left: auto; }
 
 /* Surface finish switch — the only viewport control that changes the model's
    look rather than the camera. Compact enough to sit beside the hint. */
 .material-switch {
   pointer-events: auto;
+  flex: none;
   display: flex;
   align-items: stretch;
   background: rgba(14, 16, 20, 0.85);
@@ -1021,6 +1033,8 @@ button { font: inherit; color: inherit; }
 }
 
 .viewport-hint {
+  flex: 0 1 auto;
+  min-width: 0;
   font-family: var(--mono);
   font-size: 0.6rem;
   letter-spacing: 0.04em;
@@ -2597,120 +2611,6 @@ button { font: inherit; color: inherit; }
   color: var(--ink);
 }
 
-/* Motion transport: a scrub row and a key list, not a full timeline. */
-.motion-transport {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  margin-bottom: 0.45rem;
-}
-
-.motion-play {
-  flex: none;
-  font-family: var(--sans);
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: 2px;
-  padding: 0.38rem 0.6rem;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.motion-play.is-playing {
-  color: #fff;
-  background: rgba(204, 41, 54, 0.28);
-  border-color: var(--signal);
-}
-
-.motion-play:disabled { opacity: 0.4; cursor: default; }
-
-.motion-scrub {
-  flex: 1;
-  min-width: 0;
-  height: 1.1rem;
-  accent-color: var(--signal);
-  cursor: pointer;
-}
-
-.motion-time {
-  flex: none;
-  min-width: 2.6rem;
-  text-align: right;
-  font-size: 0.68rem;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-secondary);
-}
-
-.motion-actions {
-  display: flex;
-  align-items: flex-end;
-  gap: 0.35rem;
-  margin-bottom: 0.5rem;
-}
-
-.motion-length { flex: 1; margin-bottom: 0; }
-.motion-key-add,
-.motion-key-remove { flex: 1; }
-
-.motion-keys {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.motion-key {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.2rem 0.35rem;
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  background: var(--surface-dark);
-}
-
-.motion-key-time {
-  font-family: var(--mono);
-  font-size: 0.66rem;
-  color: var(--ink-secondary);
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-}
-
-.motion-key-time:hover { color: var(--ink); }
-
-.motion-key-pose {
-  flex: 1;
-  font-size: 0.6rem;
-  text-align: right;
-  color: var(--ink-faint);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.motion-key-delete {
-  flex: none;
-  background: none;
-  border: none;
-  color: var(--ink-faint);
-  font-size: 0.85rem;
-  line-height: 1;
-  padding: 0 0.1rem;
-  cursor: pointer;
-}
-
-.motion-key-delete:hover { color: var(--danger); }
-
 /* DRO wells for placement numerals */
 .object-xyz .object-input {
   background: var(--surface-dark);
@@ -3474,8 +3374,361 @@ button { font: inherit; color: inherit; }
   .viewport-views { display: none; }
 }
 
+/* Below a wide desktop the centred view bar would sit on the schema tag and
+   the DRO, so it docks to the free top-right corner instead. */
+@media (max-width: 1240px) {
+  .viewport-views {
+    left: auto;
+    right: 0.95rem;
+    transform: none;
+    justify-content: flex-end;
+    max-width: calc(100% - 9rem);
+  }
+}
+
 @media (max-width: 420px) {
   .workspace-main { padding: 0.5rem; }
   .topbar { gap: 0.4rem; }
 }
 
+
+/* --- Design / Motion switch and the motion timeline --------------------- */
+/* Design is the ordinary workspace. Motion is a separate view of the same
+   scene: the timeline docks under the viewport and the transport, tracks and
+   keyframes live there, so authoring reads like any simple animation tool. */
+
+.view-switch {
+  display: flex;
+  align-items: stretch;
+  margin-left: 0.5rem;
+  background: rgba(20, 22, 26, 0.85);
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.view-switch-option {
+  font-family: var(--sans);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-soft, rgba(232, 234, 237, 0.62));
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border-strong);
+  padding: 0.42rem 0.85rem;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.view-switch-option:last-child { border-right: none; }
+.view-switch-option:hover { color: #fff; }
+
+.view-switch-option.is-active {
+  color: #fff;
+  background: rgba(204, 41, 54, 0.26);
+  box-shadow: inset 0 -2px 0 var(--signal);
+}
+
+/* Motion view: the viewport gives up height to the timeline, never the other
+   way round, so the tracks stay readable at every window size. */
+.workspace-main[data-mode="motion"] .viewport { min-height: 200px; }
+
+.timeline {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: 38vh;
+  min-height: 148px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.timeline-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.9rem;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.timeline-transport {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.timeline-btn {
+  font-family: var(--sans);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(232, 234, 237, 0.85);
+  background: rgba(14, 16, 20, 0.85);
+  border: 1px solid rgba(232, 234, 237, 0.18);
+  border-radius: 2px;
+  padding: 0.4rem 0.7rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.timeline-btn:hover:not(:disabled) { border-color: var(--signal); color: #fff; }
+.timeline-btn:disabled { opacity: 0.35; cursor: default; }
+
+.timeline-play.is-playing {
+  background: var(--signal);
+  border-color: var(--signal);
+  color: #fff;
+}
+
+.timeline-clock {
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  color: rgba(232, 234, 237, 0.7);
+  padding-left: 0.2rem;
+}
+
+.timeline-length {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--sans);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.timeline-length .object-input { width: 4.25rem; }
+
+.timeline-unit { font-family: var(--mono); font-size: 0.6rem; }
+
+.timeline-help {
+  margin: 0 0 0 auto;
+  max-width: 46ch;
+  font-size: 0.62rem;
+  line-height: 1.35;
+  color: var(--ink-faint);
+  text-align: right;
+}
+
+.timeline-body {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 172px minmax(0, 1fr);
+  min-height: 0;
+  overflow: auto;
+}
+
+.timeline-gutter {
+  border-right: 1px solid var(--border-strong);
+  background: rgba(14, 16, 20, 0.35);
+}
+
+.timeline-gutter-head,
+.timeline-ruler {
+  height: 22px;
+}
+
+.timeline-gutter-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0 0.55rem;
+  font-size: 0.55rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.timeline-gutter-meta {
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  opacity: 0.75;
+}
+
+.timeline-name {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  border-bottom: 1px solid rgba(232, 234, 237, 0.06);
+}
+
+.timeline-name.is-selected { background: rgba(204, 41, 54, 0.12); }
+
+.timeline-name-button {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0 0.55rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 0.68rem;
+  color: var(--ink);
+  text-align: left;
+}
+
+.timeline-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-name-meta {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 0.54rem;
+  color: var(--ink-faint);
+}
+
+.timeline-name-clear {
+  flex: none;
+  width: 1.4rem;
+  height: 100%;
+  background: none;
+  border: none;
+  color: var(--ink-faint);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.timeline-name-clear:hover:not(:disabled) { color: var(--signal); }
+
+.timeline-lanes {
+  position: relative;
+  min-width: 0;
+  /* Diamonds and the playhead straddle the time axis; clip the halves that
+     would otherwise push a scrollbar onto the lane column. */
+  overflow: hidden;
+}
+
+.timeline-ruler {
+  position: relative;
+  border-bottom: 1px solid var(--border-strong);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.timeline-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  padding: 4px 0 0 3px;
+  background: rgba(232, 234, 237, 0.14);
+  font-family: var(--mono);
+  font-size: 0.5rem;
+  color: rgba(232, 234, 237, 0.42);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.timeline-tick i { display: none; }
+
+.timeline-lane {
+  position: relative;
+  height: 26px;
+  border-bottom: 1px solid rgba(232, 234, 237, 0.06);
+  cursor: pointer;
+}
+
+.timeline-lane.is-selected { background: rgba(232, 234, 237, 0.035); }
+
+.timeline-lane.is-empty::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px dashed rgba(232, 234, 237, 0.09);
+  pointer-events: none;
+}
+
+.timeline-key {
+  position: absolute;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  margin: -6.5px 0 0 -6.5px;
+  padding: 0;
+  transform: rotate(45deg);
+  background: var(--signal);
+  border: 1px solid rgba(0, 0, 0, 0.4);
+  border-radius: 1px;
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 1;
+}
+
+.timeline-key:hover { background: #ff5a68; }
+
+.timeline-key.is-dragging {
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.18);
+}
+
+.timeline-key-add {
+  position: absolute;
+  top: 50%;
+  left: 0.35rem;
+  transform: translateY(-50%);
+  font-family: var(--sans);
+  font-size: 0.55rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(232, 234, 237, 0.55);
+  background: transparent;
+  border: 1px dashed rgba(232, 234, 237, 0.22);
+  border-radius: 2px;
+  padding: 0.1rem 0.4rem;
+  cursor: pointer;
+}
+
+.timeline-key-add:hover:not(:disabled) {
+  color: #fff;
+  border-color: var(--signal);
+}
+
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #ff5a68;
+  box-shadow: 0 0 6px rgba(255, 90, 104, 0.45);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.timeline-playhead.is-playing { background: #fff; }
+
+@media (max-width: 900px) {
+  .view-switch-option { padding: 0.4rem 0.55rem; font-size: 0.62rem; }
+  .timeline-body { grid-template-columns: 120px minmax(0, 1fr); }
+  .timeline-help { display: none; }
+  .timeline { max-height: 44vh; }
+}
+
+/* Short windows: the timeline keeps its rows, the well gives up more height. */
+@media (max-height: 720px) {
+  .workspace-main[data-mode="motion"] .viewport { min-height: 150px; }
+  .timeline { min-height: 130px; max-height: 42vh; }
+}
