@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyPlacementToResponse,
+  bakeDisplayedScene,
   expandSelectionToGroups,
   groupSelection,
   isAssemblySpec,
@@ -199,6 +200,48 @@ describe("groups and rotation", () => {
     expect(next?.components[1].transform.position).toEqual([0, -10, 0]);
     expect(next?.components[0].transform.rotation[2]).toBe(90);
     expect(next?.components[1].transform.rotation[2]).toBe(90);
+  });
+
+  it("locks the scene as displayed instead of snapping to the committed pose", () => {
+    // The user drags the board but has not pressed Apply yet.
+    const committed = response(ASSEMBLY);
+    const dragged = applyPlacementToResponse(committed, "arduino_1", {
+      transform: { position: [40, -12, 9], rotation: [0, 0, 30] },
+    })!;
+    const displayed = sceneObjects(dragged, (path) => path, []);
+
+    const baked = bakeDisplayedScene(committed, displayed);
+    const spec = baked.specification;
+    if (!isAssemblySpec(spec)) throw new Error("expected an assembly");
+    const locked = setSelectionLocked(spec, ["arduino_1"], true)!;
+    const board = locked.components.find((c) => c.id === "arduino_1")!;
+
+    expect(board.locked).toBe(true);
+    // The whole point: locking keeps the pose the user is looking at.
+    expect(board.transform.position).toEqual([40, -12, 9]);
+    expect(board.transform.rotation).toEqual([0, 0, 30]);
+    // No rebuild: mesh URLs survive the scene commit.
+    expect(baked.component_files?.arduino_1.stl.download_url).toBe(
+      committed.component_files?.arduino_1.stl.download_url,
+    );
+  });
+
+  it("bakes every displayed pose, not just the locked one", () => {
+    const committed = response(ASSEMBLY);
+    const displayed = sceneObjects(
+      committed,
+      (path) => path,
+      [],
+    ).map((object) =>
+      object.id === "screws_1"
+        ? { ...object, transform: { position: [7, 3, 1] as [number, number, number], rotation: [0, 0, 0] as [number, number, number] } }
+        : object,
+    );
+    const baked = bakeDisplayedScene(committed, displayed);
+    if (!isAssemblySpec(baked.specification)) throw new Error("expected an assembly");
+    const screws = baked.specification.components.find((c) => c.id === "screws_1")!;
+    expect(screws.transform.position).toEqual([7, 3, 1]);
+    expect(screws.parameters).toEqual({ length: 12 });
   });
 
   it("locks selected components and expands a group selection", () => {

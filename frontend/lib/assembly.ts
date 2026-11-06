@@ -176,6 +176,32 @@ export function applyPlacementToResponse(
   };
 }
 
+/**
+ * Bake the scene as displayed into a response: current poses, names, visibility
+ * and instance lists, with parameters and groups untouched.
+ *
+ * Scene-level actions (lock, group, ungroup) commit a specification without a
+ * rebuild. If they started from the last *committed* revision, an unsaved drag
+ * would be discarded and the object would snap back to its old pose — this is
+ * what makes those actions preserve what the user is looking at.
+ */
+export function bakeDisplayedScene(
+  response: GenerateResponse,
+  objects: SceneObject[],
+): GenerateResponse {
+  let next = response;
+  for (const object of objects) {
+    next =
+      applyPlacementToResponse(next, object.id, {
+        name: object.name,
+        transform: object.transform,
+        visible: object.visible,
+        instances: object.instances,
+      }) ?? next;
+  }
+  return next;
+}
+
 /** Drop one object from the scene. Meshes of the rest stay; combined STEP is stale until remint. */
 export function removeComponentFromResponse(
   response: GenerateResponse,

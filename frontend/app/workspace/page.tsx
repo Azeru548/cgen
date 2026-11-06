@@ -30,6 +30,7 @@ import {
 } from "@/lib/api";
 import {
   applyPlacementToResponse,
+  bakeDisplayedScene,
   expandSelectionToGroups,
   groupSelection,
   groupsOf,
@@ -942,32 +943,39 @@ export default function Home() {
     [visible, clearDrafts],
   );
 
+  // Scene actions commit a specification, not a rebuild — but they must commit
+  // the scene as DISPLAYED, otherwise a drag that has not been applied yet is
+  // dropped and the object snaps back to its last committed pose.
+  const sceneSpec = useCallback(() => {
+    if (visible === null) return null;
+    if (!isAssemblySpec(visible.response.specification)) return null;
+    const baked = bakeDisplayedScene(visible.response, objects).specification;
+    return isAssemblySpec(baked) ? baked : null;
+  }, [visible, objects]);
+
   const handleGroup = useCallback(() => {
-    if (visible === null) return;
-    commitSpecPatch(
-      "Group",
-      groupSelection(visible.response.specification, selectedIds, ""),
-    );
-  }, [visible, selectedIds, commitSpecPatch]);
+    const current = sceneSpec();
+    if (current === null) return;
+    commitSpecPatch("Group", groupSelection(current, selectedIds, ""));
+  }, [sceneSpec, selectedIds, commitSpecPatch]);
 
   const handleUngroup = useCallback(() => {
-    if (visible === null) return;
-    commitSpecPatch(
-      "Ungroup",
-      ungroupSelection(visible.response.specification, selectedIds),
-    );
-  }, [visible, selectedIds, commitSpecPatch]);
+    const current = sceneSpec();
+    if (current === null) return;
+    commitSpecPatch("Ungroup", ungroupSelection(current, selectedIds));
+  }, [sceneSpec, selectedIds, commitSpecPatch]);
 
   const handleLock = useCallback(() => {
-    if (visible === null) return;
+    const current = sceneSpec();
+    if (current === null) return;
     const selectedObjects = objects.filter((object) => selectedIds.includes(object.id));
     const allLocked =
       selectedObjects.length > 0 && selectedObjects.every((object) => object.locked);
     commitSpecPatch(
       allLocked ? "Unlock" : "Lock",
-      setSelectionLocked(visible.response.specification, selectedIds, !allLocked),
+      setSelectionLocked(current, selectedIds, !allLocked),
     );
-  }, [visible, objects, selectedIds, commitSpecPatch]);
+  }, [sceneSpec, objects, selectedIds, commitSpecPatch]);
 
 
 
