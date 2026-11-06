@@ -64,7 +64,10 @@ Next.js 16 + React 19 + R3F + Firebase. Routes: `/` landing,
   group, lock, and remove commit locally and keep existing mesh URLs.
   Parameter Apply and library add hit `/assembly/update` / `/assembly/add`
   with prior `component_files` so unchanged solids are not re-exported;
-  the viewer overlay stays off so other meshes do not flash. Any solid
+  the viewer overlay still runs for the whole request, however short, so
+  every non-instant change reads as work in progress (the instant local
+  commits above — placement, name, visibility, group, lock, remove — never
+  set it). Any solid
   change (parameter, add, remove) also re-exports the combined STEP/STL, so
   downloads never lag behind geometry; pose-only edits keep the combined
   file until remint. `ParametricPanel + useParametricSession`

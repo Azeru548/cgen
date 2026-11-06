@@ -202,7 +202,6 @@ export default function Home() {
   const firestoreDb = useFirestore();
   const { uid } = useProjectSync(project, setProject, firestoreDb, clearDrafts);
   const [homeNotice, setHomeNotice] = useState<string | null>(null);
-  const [lockViewer, setLockViewer] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -707,7 +706,6 @@ export default function Home() {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    setLockViewer(true);
     setStatus("generating");
     setGenerateError(null);
     setPreviewError(null);
@@ -732,8 +730,6 @@ export default function Home() {
       track("generate_failed");
       setGenerateError(humanizeApiError(err as ApiError));
       setStatus("error");
-    } finally {
-      setLockViewer(false);
     }
   }, [prompt, status, clearDrafts, visible]);
 
@@ -747,7 +743,6 @@ export default function Home() {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    setLockViewer(true);
     setStatus("generating");
     setGenerateError(null);
     setPreviewError(null);
@@ -773,8 +768,6 @@ export default function Home() {
       track("modify_failed");
       setGenerateError(humanizeApiError(err as ApiError));
       setStatus("error");
-    } finally {
-      setLockViewer(false);
     }
   }, [prompt, status, visible, clearDrafts, activeSelectedId, selectedObject]);
 
@@ -798,7 +791,6 @@ export default function Home() {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    setLockViewer(true);
     setStatus("generating");
     setGenerateError(null);
     setPreviewError(null);
@@ -810,8 +802,6 @@ export default function Home() {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setGenerateError(humanizeApiError(err as ApiError));
       setStatus("error");
-    } finally {
-      setLockViewer(false);
     }
   }, [status, visible]);
 
@@ -832,16 +822,11 @@ export default function Home() {
   }, [visible]);
 
   const commitAssembly = useCallback(
-    async (
-      label: string,
-      work: () => Promise<GenerateResponse>,
-      options: { lockViewer?: boolean } = {},
-    ): Promise<boolean> => {
+    async (label: string, work: () => Promise<GenerateResponse>): Promise<boolean> => {
       if (status === "generating") return false;
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
-      setLockViewer(options.lockViewer !== false);
       setStatus("generating");
       setGenerateError(null);
       try {
@@ -854,8 +839,6 @@ export default function Home() {
         setGenerateError(humanizeApiError(err as ApiError));
         setStatus("error");
         return false;
-      } finally {
-        setLockViewer(false);
       }
     },
     [status],
@@ -887,7 +870,6 @@ export default function Home() {
             { count, ...reuseFiles() },
             abortRef.current?.signal,
           ),
-        { lockViewer: false },
       );
     },
     [commitAssembly, specRecord, reuseFiles],
@@ -1067,7 +1049,6 @@ export default function Home() {
             },
             abortRef.current?.signal,
           ),
-        { lockViewer: false },
       ).then((ok) => {
         if (ok) forgetDraft(id);
       });
@@ -1133,7 +1114,6 @@ export default function Home() {
           },
           abortRef.current?.signal,
         ),
-      { lockViewer: false },
     ).then((ok) => {
       if (ok) forgetDraft(id);
     });
@@ -1360,7 +1340,7 @@ export default function Home() {
                   isPartSpec(displayResult.specification),
               };
             })}
-            busy={busy && lockViewer}
+            busy={busy || committing}
             previewError={previewError}
             onPreviewStatus={handlePreviewStatus}
             onSelectExample={setPrompt}
