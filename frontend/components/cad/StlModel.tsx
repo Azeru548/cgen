@@ -28,6 +28,9 @@ interface StlModelProps {
   onSelect?: (id: string, instanceIndex: number, additive: boolean) => void;
   /** Display-only surface preset; never affects the exported geometry. */
   material?: MaterialId;
+  /** Clicks report a hit point instead of selecting (measure tool). */
+  measure?: boolean;
+  onMeasure?: (point: THREE.Vector3) => void;
 }
 
 /** Fetches an STL URL, parses it to BufferGeometry, centers it on the
@@ -49,6 +52,8 @@ export function StlModel({
   instanceIndex = -1,
   onSelect,
   material = DEFAULT_MATERIAL_ID,
+  measure = false,
+  onMeasure,
 }: StlModelProps) {
   const geometryRef = useRef<THREE.BufferGeometry | null>(null);
   const [geometry, setGeometry] = useState<THREE.BufferGeometry | null>(null);
@@ -110,6 +115,10 @@ export function StlModel({
   const rx = (rotationDeg?.[0] ?? 0) * DEG;
   const ry = (rotationDeg?.[1] ?? 0) * DEG;
   const rz = (rotationDeg?.[2] ?? 0) * DEG;
+  // Stored rotations are the backend's XYZ Euler applied X first, then Y,
+  // then Z (= Rz·Ry·Rx). three's "ZYX" order is that same composition; the
+  // default "XYZ" order would show a different pose than the exported STEP.
+  const euler: [number, number, number, "ZYX"] = [rx, ry, rz, "ZYX"];
   const surface = materialById(material);
   return (
     <mesh
@@ -117,10 +126,14 @@ export function StlModel({
       geometry={geometry}
       scale={scale ?? [1, 1, 1]}
       position={position ?? [0, 0, 0]}
-      rotation={[rx, ry, rz]}
+      rotation={euler}
       onClick={(event) => {
-        if (!objectId || !onSelect) return;
         event.stopPropagation();
+        if (measure) {
+          onMeasure?.(event.point.clone());
+          return;
+        }
+        if (!objectId || !onSelect) return;
         onSelect(
           objectId,
           instanceIndex,
@@ -146,15 +159,28 @@ export function StlModel({
   );
 }
 
+export type ViewName = "iso" | "front" | "top" | "right";
+
+/** Camera directions in **world** space (Y up). The scene is drawn inside a
+ *  CAD→viewer wrapper, so CAD +Z is world +Y: `front` looks along CAD −Y and
+ *  `top` looks down CAD −Z, exactly like a drawing's front/top views. */
+export const VIEW_DIRECTIONS: Record<ViewName, [number, number, number]> = {
+  iso: [1, 0.62, 1],
+  front: [0, 0, 1],
+  top: [0, 1, 0],
+  right: [1, 0, 0],
+};
+
 interface FrameCameraProps {
   group: THREE.Object3D | null;
   contentRev: number;
   resetSignal: number;
   floorY: (y: number) => void;
   hasContent: boolean;
-  /** Reports the largest bounding-box dimension so the viewport can size
-   *  scene-relative effects (contact shadow plane, floor) to the part. */
+  /** Largest bounding-box dimension, for size-relative scene effects. */
   onScale?: (maxDim: number) => void;
+  /** One-shot standard-view request; `id` re-triggers the same view. */
+  viewRequest?: { id: number; view: ViewName } | null;
 }
 
 /** Frames any model size: distance derives from the bounding box, so a
@@ -168,17 +194,24 @@ export function FrameCamera({
   floorY,
   hasContent,
   onScale,
+  viewRequest = null,
 }: FrameCameraProps) {
   const camera = useThree((s) => s.camera);
+  const viewport = useThree((s) => s.size);
   const controls = useThree((s) => s.controls) as unknown as {
     target: THREE.Vector3;
     update: () => void;
   } | null;
   const lastFramedRef = useRef<number | null>(null);
   const hadGeometryRef = useRef(false);
+  const viewRef = useRef<ViewName>("iso");
 
   /* eslint-disable react-hooks/immutability -- R3F cameras/controls are mutated by design */
-  const measure = useCallback((): { maxDim: number; minY: number } | null => {
+  const measure = useCallback((): {
+    maxDim: number;
+    minY: number;
+    centre: [number, number, number];
+  } | null => {
     if (!group || !hasContent) return null;
     /* Measure only CAD content. TransformControls' gizmo is a sibling
      * object in the same group and is sized to the camera distance —
@@ -188,29 +221,57 @@ export function FrameCamera({
       if (node.userData?.cgenContent === true) box.expandByObject(node);
     });
     if (box.isEmpty()) return null;
-    const size = box.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z, 1);
-    return { maxDim, minY: box.min.y };
+    const dim = box.getSize(new THREE.Vector3());
+    const centre = box.getCenter(new THREE.Vector3());
+    return {
+      maxDim: Math.max(dim.x, dim.y, dim.z, 1),
+      minY: box.min.y,
+      centre: [centre.x, centre.y, centre.z],
+    };
   }, [group, hasContent]);
+
+  /* Places whichever camera is current. The toolbar can swap perspective for
+   * orthographic, and both have to frame the same box on the same target. */
+  const place = useCallback(
+    (view: ViewName, maxDim: number, centre: [number, number, number]) => {
+      const target = new THREE.Vector3(...centre);
+      const direction = new THREE.Vector3(...VIEW_DIRECTIONS[view]).normalize();
+      const ortho = camera as THREE.OrthographicCamera;
+      if (ortho.isOrthographicCamera) {
+        // The ortho frustum is in pixels, so `zoom` is pixels-per-mm.
+        const pixels = Math.max(Math.min(viewport.width, viewport.height), 1);
+        ortho.zoom = pixels / (maxDim * 1.7);
+        ortho.near = -maxDim * 20;
+        ortho.far = maxDim * 40;
+        ortho.updateProjectionMatrix();
+        camera.position.copy(target.clone().addScaledVector(direction, maxDim * 3));
+      } else {
+        const perspective = camera as THREE.PerspectiveCamera;
+        const fov = ((perspective.fov || 40) * Math.PI) / 180;
+        const distance = (maxDim / 2 / Math.tan(fov / 2)) * 1.6;
+        perspective.near = Math.max(distance / 1000, 0.1);
+        perspective.far = Math.max(distance * 20, 1000);
+        perspective.updateProjectionMatrix();
+        camera.position.copy(target.clone().addScaledVector(direction, distance));
+      }
+      // Looking straight down needs a different up vector or lookAt degenerates.
+      camera.up.set(0, view === "top" ? 0 : 1, view === "top" ? -1 : 0);
+      camera.lookAt(target);
+      controls?.target.copy(target);
+      controls?.update();
+      viewRef.current = view;
+    },
+    [camera, controls, viewport.height, viewport.width],
+  );
 
   const frame = useCallback(() => {
     const measured = measure();
     if (!measured) return;
-    const { maxDim, minY } = measured;
-    onScale?.(maxDim);
-    const perspective = camera as THREE.PerspectiveCamera;
-    const fov = ((perspective.fov || 40) * Math.PI) / 180;
-    const distance = ((maxDim / 2) / Math.tan(fov / 2)) * 1.6;
-    const direction = new THREE.Vector3(1, 0.62, 1).normalize();
-    camera.position.copy(direction.multiplyScalar(distance));
-    camera.near = Math.max(distance / 1000, 0.1);
-    camera.far = Math.max(distance * 20, 1000);
-    camera.updateProjectionMatrix();
-    controls?.target.set(0, 0, 0);
-    controls?.update();
-    lastFramedRef.current = maxDim;
-    floorY(minY);
-  }, [measure, camera, controls, floorY, onScale]);
+    onScale?.(measured.maxDim);
+    place("iso", measured.maxDim, measured.centre);
+    lastFramedRef.current = measured.maxDim;
+    floorY(measured.minY);
+  }, [measure, place, floorY, onScale]);
 
   useEffect(() => {
     if (!hasContent) {
@@ -235,6 +296,23 @@ export function FrameCamera({
   useEffect(() => {
     if (resetSignal > 0) frame();
   }, [resetSignal, frame]);
+
+  // Front / Top / Right / Iso from the viewport toolbar.
+  useEffect(() => {
+    if (!viewRequest) return;
+    const measured = measure();
+    if (!measured) return;
+    place(viewRequest.view, measured.maxDim, measured.centre);
+  }, [viewRequest, measure, place]);
+
+  // Projection swap (perspective <-> orthographic) arrives as a new camera
+  // object: re-fit it to the content before the first frame is drawn.
+  useEffect(() => {
+    if (!hasContent) return;
+    const measured = measure();
+    if (!measured) return;
+    place(viewRef.current, measured.maxDim, measured.centre);
+  }, [camera, hasContent, measure, place]);
   /* eslint-enable react-hooks/immutability */
 
   return null;

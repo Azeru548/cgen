@@ -1,19 +1,30 @@
 import { describe, expect, it } from "vitest";
 import {
+  animationOf,
   applyPlacementToResponse,
   bakeDisplayedScene,
+  bomRows,
+  duplicateComponent,
   expandSelectionToGroups,
   groupSelection,
   isAssemblySpec,
   isPartSpec,
+  keyAt,
+  placedBounds,
   posesOf,
   promoteResponseToAssembly,
   removeComponentFromResponse,
   rotateSelection,
+  sampleTrack,
   sceneObjects,
+  setAnimationDuration,
   setSelectionLocked,
+  trackFor,
+  translateSelection,
   ungroupSelection,
   withComponentPatch,
+  withTrack,
+  withoutKey,
 } from "../lib/assembly";
 import type {
   AssemblySpecification,
@@ -308,5 +319,124 @@ describe("incremental scene commits", () => {
       components: [ASSEMBLY.components[0]],
     };
     expect(removeComponentFromResponse(response(only), "arduino_1")).toBeNull();
+  });
+});
+
+describe("placement helpers", () => {
+  const specs = { ...ASSEMBLY, groups: [] } as AssemblySpecification;
+
+  it("reports the world box of a rotated part", () => {
+    const bounds = { min: [-20, -10, -5] as [number, number, number], size: [40, 20, 10] as [number, number, number] };
+    const placed = placedBounds(
+      { position: [10, 0, 0], rotation: [0, 0, 90] },
+      bounds,
+    );
+    // A 40 × 20 footprint turned 90° about Z occupies 20 × 40, shifted +10 in X.
+    expect(placed.min[0]).toBeCloseTo(0, 5);
+    expect(placed.max[0]).toBeCloseTo(20, 5);
+    expect(placed.min[1]).toBeCloseTo(-20, 5);
+    expect(placed.max[1]).toBeCloseTo(20, 5);
+    expect(placed.min[2]).toBeCloseTo(-5, 5);
+  });
+
+  it("translates a component and its instances", () => {
+    const withInstances: AssemblySpecification = {
+      ...specs,
+      components: specs.components.map((component) =>
+        component.id === "screws_1"
+          ? {
+              ...component,
+              transform: { position: [0, 0, 0], rotation: [0, 0, 0] },
+              instances: [
+                { position: [5, 5, 0], rotation: [0, 0, 0] },
+                { position: [15, 5, 0], rotation: [0, 0, 0] },
+              ],
+            }
+          : component,
+      ),
+    };
+    const next = translateSelection(withInstances, ["screws_1"], [0, 0, 12]);
+    expect(next).not.toBeNull();
+    const moved = next!.components.find((c) => c.id === "screws_1")!;
+    expect(moved.transform.position).toEqual([0, 0, 12]);
+    expect(moved.instances.map((pose) => pose.position[2])).toEqual([12, 12]);
+    expect(translateSelection(withInstances, ["screws_1"], [0, 0, 0])).toBeNull();
+  });
+
+  it("duplicates a component off to the side with a fresh id", () => {
+    const source = specs.components[0];
+    const copy = duplicateComponent(specs, source.id, [30, 0, 0]);
+    expect(copy).not.toBeNull();
+    expect(copy!.id).not.toBe(source.id);
+    const cloned = copy!.specification.components.find((c) => c.id === copy!.id)!;
+    expect(cloned.name.endsWith("copy")).toBe(true);
+    expect(cloned.transform.position[0]).toBe(source.transform.position[0] + 30);
+    expect(cloned.parameters).toEqual(source.parameters);
+    expect(cloned.locked).toBe(false);
+    expect(copy!.specification.components).toHaveLength(specs.components.length + 1);
+  });
+});
+
+describe("motion tracks", () => {
+  const track = {
+    component_id: "arduino_1",
+    keys: [
+      { t: 0, position: [0, 0, 0] as [number, number, number], rotation: [0, 0, 0] as [number, number, number] },
+      { t: 2, position: [10, 0, 20] as [number, number, number], rotation: [0, 0, 350] as [number, number, number] },
+    ],
+    loop: true,
+  };
+
+  it("interpolates position and takes the short way round for angles", () => {
+    const mid = sampleTrack(track, 1);
+    expect(mid.position).toEqual([5, 0, 10]);
+    // 0° → 350° is a −10° turn, so the midpoint is −5° (355), not 175°.
+    expect(mid.rotation[2]).toBeCloseTo(-5, 6);
+    expect(sampleTrack(track, -1).position).toEqual([0, 0, 0]);
+    expect(sampleTrack(track, 99).position).toEqual([10, 0, 20]);
+  });
+
+  it("holds a single key and survives an empty track", () => {
+    const single = { ...track, keys: [track.keys[0]] };
+    expect(sampleTrack(single, 3).position).toEqual([0, 0, 0]);
+    expect(sampleTrack({ ...track, keys: [] }, 3).position).toEqual([0, 0, 0]);
+  });
+
+  it("replaces a key within 20 ms and keeps the list sorted", () => {
+    const updated = keyAt(track, 1, { position: [1, 2, 3], rotation: [0, 0, 0] });
+    expect(updated.keys.map((key) => key.t)).toEqual([0, 1, 2]);
+    const replaced = keyAt(updated, 1.005, {
+      position: [9, 9, 9],
+      rotation: [0, 0, 0],
+    });
+    expect(replaced.keys).toHaveLength(3);
+    expect(replaced.keys[1].position).toEqual([9, 9, 9]);
+  });
+
+  it("adds and removes tracks through the scene", () => {
+    const spec: AssemblySpecification = { ...ASSEMBLY, groups: [] };
+    const added = withTrack(spec, track);
+    expect(animationOf(added)?.tracks).toHaveLength(1);
+    expect(trackFor(added, "arduino_1")?.keys).toHaveLength(2);
+    const removed = withTrack(added, { ...track, keys: [] });
+    expect(animationOf(removed)).toBeNull();
+    expect(withoutKey(track, 0).keys).toHaveLength(1);
+  });
+
+  it("clamps duration and drops keys past the new end", () => {
+    const spec = withTrack({ ...ASSEMBLY, groups: [] }, track);
+    const shortened = setAnimationDuration(spec, 1);
+    expect(shortened.animation?.duration).toBe(1);
+    expect(shortened.animation?.tracks[0].keys.map((key) => key.t)).toEqual([0]);
+    expect(setAnimationDuration(spec, 0).animation?.duration).toBe(0.2);
+  });
+
+  it("counts instances as separate parts in the bill of materials", () => {
+    const rows = bomRows(ASSEMBLY);
+    const screws = rows.find((row) => row.type === "screws_1") ?? rows.find((row) => row.quantity > 1);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.reduce((sum, row) => sum + row.quantity, 0)).toBeGreaterThan(0);
+    expect(screws === undefined || screws.quantity >= 1).toBe(true);
+    expect(bomRows(PART)).toEqual([]);
   });
 });

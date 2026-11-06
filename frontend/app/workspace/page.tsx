@@ -6,9 +6,11 @@ import { BootScreen, type BootChecks } from "@/components/BootScreen";
 import { CadViewport } from "@/components/cad/CadViewport";
 import type { PreviewState } from "@/components/cad/StlModel";
 import { AssemblyTree } from "@/components/AssemblyTree";
+import { Bom } from "@/components/Bom";
 import { ComponentBrowser } from "@/components/ComponentBrowser";
 import { Inspector } from "@/components/Inspector";
 import { ObjectInspector } from "@/components/ObjectInspector";
+import { MotionPanel } from "@/components/MotionPanel";
 import { ParametricPanel } from "@/components/ParametricPanel";
 import { WorkspaceHome } from "@/components/WorkspaceHome";
 import { AccountChip } from "@/components/AccountChip";
@@ -31,15 +33,26 @@ import {
 import {
   applyPlacementToResponse,
   bakeDisplayedScene,
+  DEFAULT_MOTION_DURATION,
+  duplicateComponent,
   expandSelectionToGroups,
+  keyAt,
   groupSelection,
   groupsOf,
   isAssemblySpec,
   isPartSpec,
+  placedBounds,
   removeComponentFromResponse,
+  sampleTrack,
   sceneObjects,
+  setAnimationDuration,
   setSelectionLocked,
+  trackFor,
+  translateSelection,
   ungroupSelection,
+  withTrack,
+  withoutKey,
+  type ObjectBounds,
   type SceneObject,
 } from "@/lib/assembly";
 import { rotatePose, type Vec3 } from "@/lib/transforms";
@@ -58,14 +71,29 @@ import { deleteWorkspaceRecord } from "@/lib/projectStore";
 import { computeLiveScale } from "@/lib/parameters";
 import type {
   AssemblyGroup,
+  AssemblySpecification,
   CatalogComponent,
   GenerateResponse,
+  MotionTrack,
   ParamValue,
 } from "@/types/api";
 import type { Project } from "@/types/revisions";
 
 type PageStatus = "idle" | "generating" | "ready" | "error";
 type AppView = "home" | "workspace";
+
+/** Quantise a drag delta so the part lands on a `step` grid in CAD space. */
+function snapVector(
+  anchor: [number, number, number],
+  delta: [number, number, number],
+  step: number,
+): [number, number, number] {
+  if (step <= 0) return delta;
+  return [0, 1, 2].map((axis) => {
+    const next = anchor[axis] + delta[axis];
+    return Math.round(next / step) * step - anchor[axis];
+  }) as [number, number, number];
+}
 
 interface PlacementDraft {
   name: string;
@@ -148,6 +176,14 @@ export default function Home() {
   const [draftInstances, setDraftInstances] = useState<
     Array<{ position: [number, number, number]; rotation: [number, number, number] }>
   >([]);
+  // Parsed mesh envelopes, reported by the viewport. Seating, centring and
+  // alignment all need the real box, not the requested dimensions.
+  const [objectBounds, setObjectBounds] = useState<Record<string, ObjectBounds>>(
+    {},
+  );
+  const [snapMm, setSnapMm] = useState(0);
+  const [playhead, setPlayhead] = useState(0);
+  const [playing, setPlaying] = useState(false);
   const [moving, setMoving] = useState(false);
   const [moveOrigin, setMoveOrigin] = useState<{
     position: [number, number, number];
@@ -429,11 +465,18 @@ export default function Home() {
   ]);
 
   const handleMoveDelta = useCallback(
-    (delta: [number, number, number]) => {
+    (rawDelta: [number, number, number]) => {
       const origin = moveOriginRef.current;
       if (origin === null) return;
       const active = selectedInstanceRef.current;
       const activeId = activeSelectedId;
+      // Snap the dragged target, then apply that same delta to companions so
+      // a grouped move stays rigid instead of each part rounding apart.
+      const anchor: [number, number, number] =
+        active >= 0 && origin.instances[active]
+          ? origin.instances[active].position
+          : origin.position;
+      const delta = snapVector(anchor, rawDelta, snapMm);
       // A specific instance of a repeated component moves alone; otherwise the
       // whole component (its transform plus every instance) moves as one.
       if (active >= 0) {
@@ -504,7 +547,7 @@ export default function Home() {
         });
       }
     },
-    [activeSelectedId, rememberPlacement],
+    [activeSelectedId, rememberPlacement, snapMm],
   );
 
   const handleMoveEnd = useCallback(() => {
@@ -908,21 +951,25 @@ export default function Home() {
     });
   }, [objects]);
 
-  const commitSpecPatch = useCallback(
-    (label: string, next: ReturnType<typeof groupSelection>) => {
-      if (next === null || visible === null) return;
-      // Groups and locks are scene handles, not a boolean merge and not a
-      // CAD rebuild. Keep the current files; only the specification changes.
-      setProject((p) =>
-        appendRevision(p, "assemble", label, {
-          ...visible.response,
-          specification: next,
-        }),
-      );
+  /** Commit a whole response locally: no rebuild, no new meshes. */
+  const commitResponsePatch = useCallback(
+    (label: string, next: GenerateResponse) => {
+      setProject((p) => appendRevision(p, "assemble", label, next));
       setGenerateError(null);
       clearDrafts();
     },
-    [visible, clearDrafts],
+    [clearDrafts],
+  );
+
+  const commitSpecPatch = useCallback(
+    (label: string, next: ReturnType<typeof groupSelection>) => {
+      if (next === null || visible === null) return;
+      // Groups, locks and placement fixes are scene handles, not a boolean
+      // merge and not a CAD rebuild. Keep the current files; only the
+      // specification changes.
+      commitResponsePatch(label, { ...visible.response, specification: next });
+    },
+    [visible, commitResponsePatch],
   );
 
   // Scene actions commit a specification, not a rebuild — but they must commit
@@ -930,7 +977,8 @@ export default function Home() {
   // dropped and the object snaps back to its last committed pose.
   const sceneSpec = useCallback(() => {
     if (visible === null) return null;
-    if (!isAssemblySpec(visible.response.specification)) return null;
+    // bakeDisplayedScene promotes a single-part document to a one-object
+    // assembly, so scene metadata (groups, placement, motion) works there too.
     const baked = bakeDisplayedScene(visible.response, objects).specification;
     return isAssemblySpec(baked) ? baked : null;
   }, [visible, objects]);
@@ -960,6 +1008,113 @@ export default function Home() {
   }, [sceneSpec, objects, selectedIds, commitSpecPatch]);
 
 
+
+  const handleObjectBounds = useCallback((id: string, next: ObjectBounds) => {
+    setObjectBounds((prev) => ({ ...prev, [id]: next }));
+  }, []);
+
+  /** Axis-aligned bounds of one placed component, from its parsed mesh. */
+  const worldBoundsOf = useCallback(
+    (spec: AssemblySpecification, id: string) => {
+      const component = spec.components.find((item) => item.id === id);
+      const bounds = objectBounds[id];
+      if (component === undefined || bounds === undefined) return null;
+      return placedBounds(component.transform, bounds);
+    },
+    [objectBounds],
+  );
+
+  // Placement quick actions are pure translations of the committed scene: no
+  // regeneration, no new meshes, one local revision each.
+  const handleSeatFloor = useCallback(() => {
+    if (activeSelectedId === null) return;
+    const spec = sceneSpec();
+    if (spec === null) return;
+    const world = worldBoundsOf(spec, activeSelectedId);
+    if (world === null) return;
+    const next = translateSelection(spec, [activeSelectedId], [
+      0,
+      0,
+      -world.min[2],
+    ]);
+    if (next === null) return;
+    commitSpecPatch("Seat on floor", next);
+  }, [activeSelectedId, sceneSpec, worldBoundsOf, commitSpecPatch]);
+
+  const handleCentre = useCallback(
+    (axis: 0 | 1 | 2) => {
+      if (activeSelectedId === null) return;
+      const spec = sceneSpec();
+      if (spec === null) return;
+      const world = worldBoundsOf(spec, activeSelectedId);
+      if (world === null) return;
+      const delta: Vec3 = [0, 0, 0];
+      delta[axis] = -((world.min[axis] + world.max[axis]) / 2);
+      const next = translateSelection(spec, [activeSelectedId], delta);
+      if (next === null) return;
+      commitSpecPatch(`Centre ${["X", "Y", "Z"][axis]}`, next);
+    },
+    [activeSelectedId, sceneSpec, worldBoundsOf, commitSpecPatch],
+  );
+
+  const handleAlign = useCallback(
+    (axis: 0 | 1 | 2) => {
+      if (activeSelectedId === null) return;
+      let spec = sceneSpec();
+      if (spec === null) return;
+      // The active object is the datum: every other ticked part moves to it.
+      const reference = worldBoundsOf(spec, activeSelectedId);
+      if (reference === null) return;
+      const target = (reference.min[axis] + reference.max[axis]) / 2;
+      let moved = false;
+      for (const id of selectedIds) {
+        if (id === activeSelectedId) continue;
+        const component = spec.components.find((item) => item.id === id);
+        if (component === undefined || component.locked) continue;
+        const world = worldBoundsOf(spec, id);
+        if (world === null) continue;
+        const delta: Vec3 = [0, 0, 0];
+        delta[axis] = target - (world.min[axis] + world.max[axis]) / 2;
+        const next = translateSelection(spec, [id], delta);
+        if (next === null) continue;
+        spec = next;
+        moved = true;
+      }
+      if (!moved) return;
+      commitSpecPatch(`Align ${["X", "Y", "Z"][axis]}`, spec);
+    },
+    [activeSelectedId, selectedIds, sceneSpec, worldBoundsOf, commitSpecPatch],
+  );
+
+  const handleDuplicate = useCallback(() => {
+    if (activeSelectedId === null || visible === null) return;
+    const spec = sceneSpec();
+    if (spec === null) return;
+    const bounds = objectBounds[activeSelectedId];
+    // Offset by the part's own width plus a 10 mm gap, so the copy clears the
+    // original whether it is a 3 mm screw or a 200 mm plate.
+    const offset: Vec3 = bounds ? [bounds.size[0] + 10, 0, 0] : [20, 0, 0];
+    const result = duplicateComponent(spec, activeSelectedId, offset);
+    if (result === null) return;
+    const files = visible.response.component_files ?? {};
+    const sourceFiles = files[activeSelectedId];
+    commitResponsePatch("Duplicate", {
+      ...visible.response,
+      specification: result.specification,
+      component_files:
+        sourceFiles === undefined
+          ? visible.response.component_files
+          : { ...files, [result.id]: sourceFiles },
+    });
+    setSelectedId(result.id);
+    setSelectedIds([result.id]);
+  }, [
+    activeSelectedId,
+    visible,
+    sceneSpec,
+    objectBounds,
+    commitResponsePatch,
+  ]);
 
   // Inspector XYZ targets the selected instance when one is active, so the
   // fields and the gizmo always manipulate the same thing.
@@ -1023,6 +1178,107 @@ export default function Home() {
     },
     [activeSelectedId, rememberPlacement],
   );
+
+  // --- Motion (viewer-only keyframes) ---------------------------------------
+
+  const activeTrack = useMemo<MotionTrack | null>(() => {
+    const spec = visible?.response.specification;
+    if (spec === undefined || activeSelectedId === null) return null;
+    return trackFor(spec, activeSelectedId);
+  }, [visible, activeSelectedId]);
+
+  const sceneAnimation =
+    visible !== null &&
+    visible.response.specification.document_type === "3d_assembly"
+      ? visible.response.specification.animation ?? null
+      : null;
+  const motionDuration = sceneAnimation?.duration ?? DEFAULT_MOTION_DURATION;
+
+  const animatedPose = useMemo(
+    () => (activeTrack === null ? null : sampleTrack(activeTrack, playhead)),
+    [activeTrack, playhead],
+  );
+
+  const writeTrack = useCallback(
+    (next: MotionTrack | null, label: string) => {
+      if (visible === null) return;
+      const spec = sceneSpec();
+      if (spec === null) return;
+      commitSpecPatch(label, withTrack(spec, next));
+    },
+    [visible, sceneSpec, commitSpecPatch],
+  );
+
+  const handleAddKey = useCallback(() => {
+    if (activeSelectedId === null) return;
+    const track: MotionTrack = activeTrack ?? {
+      component_id: activeSelectedId,
+      keys: [],
+      loop: true,
+    };
+    const next = keyAt(track, playhead, {
+      position: shownPosition,
+      rotation: draftRotation,
+    });
+    writeTrack(next, activeTrack === null ? "Animate" : "Key");
+  }, [
+    activeSelectedId,
+    activeTrack,
+    playhead,
+    shownPosition,
+    draftRotation,
+    writeTrack,
+  ]);
+
+  const handleRemoveKey = useCallback(
+    (index: number) => {
+      if (activeTrack === null) return;
+      const next = withoutKey(activeTrack, index);
+      writeTrack(next.keys.length === 0 ? null : next, "Delete key");
+    },
+    [activeTrack, writeTrack],
+  );
+
+  const handleToggleTrack = useCallback(() => {
+    if (activeSelectedId === null) return;
+    if (activeTrack !== null) {
+      writeTrack(null, "Clear motion");
+      setPlaying(false);
+      setPlayhead(0);
+      return;
+    }
+    const next = keyAt(
+      { component_id: activeSelectedId, keys: [], loop: true },
+      0,
+      { position: shownPosition, rotation: draftRotation },
+    );
+    writeTrack(next, "Animate");
+  }, [
+    activeSelectedId,
+    activeTrack,
+    shownPosition,
+    draftRotation,
+    writeTrack,
+  ]);
+
+  const handleDuration = useCallback(
+    (duration: number) => {
+      if (visible === null || !Number.isFinite(duration)) return;
+      const spec = sceneSpec();
+      if (spec === null) return;
+      commitSpecPatch("Motion length", setAnimationDuration(spec, duration));
+      setPlayhead((value) => Math.min(value, Math.max(0.2, duration)));
+    },
+    [visible, sceneSpec, commitSpecPatch],
+  );
+
+  const handlePlay = useCallback(() => {
+    if (activeTrack === null) return;
+    setPlaying((value) => {
+      if (!value && playhead >= motionDuration - 0.05) setPlayhead(0);
+      return !value;
+    });
+  }, [activeTrack, playhead, motionDuration]);
 
   const handleApplyPlacement = useCallback(() => {
     if (visible === null || activeSelectedId === null) return;
@@ -1341,6 +1597,24 @@ export default function Home() {
               };
             })}
             busy={busy || committing}
+            onBounds={handleObjectBounds}
+            snapMm={snapMm}
+            onSnapChange={setSnapMm}
+            animation={sceneAnimation}
+            playing={playing}
+            playhead={playhead}
+            onPlayhead={setPlayhead}
+            readout={
+              activeSelectedId !== null && selectedObject !== null
+                ? {
+                    id: activeSelectedId,
+                    name: draftName || selectedObject.name,
+                    position: animatedPose?.position ?? shownPosition,
+                    rotation: animatedPose?.rotation ?? draftRotation,
+                    instanceIndex: selectedInstance,
+                  }
+                : null
+            }
             previewError={previewError}
             onPreviewStatus={handlePreviewStatus}
             onSelectExample={setPrompt}
@@ -1349,7 +1623,8 @@ export default function Home() {
             canDrag={
               !busy &&
               activeSelectedId !== null &&
-              selectedObject?.locked !== true
+              selectedObject?.locked !== true &&
+              activeTrack === null
             }
             onMoveStart={handleMoveStart}
             onMoveDelta={handleMoveDelta}
@@ -1430,6 +1705,9 @@ export default function Home() {
             onSelectRevision={handleSelectRevision}
             onRemint={handleRemint}
             remintBusy={busy}
+            bom={
+              displayResult ? <Bom spec={displayResult.specification} /> : undefined
+            }
             assembly={
               <>
                 <AssemblyTree
@@ -1453,6 +1731,7 @@ export default function Home() {
                   onGroup={handleGroup}
                   onUngroup={handleUngroup}
                   onLock={handleLock}
+                  onDuplicate={handleDuplicate}
                   busy={busy}
                 />
                 <ObjectInspector
@@ -1465,6 +1744,15 @@ export default function Home() {
                   placementDirty={placementDirty}
                   paramsDirty={paramsDirty}
                   busy={busy}
+                  bounds={
+                    activeSelectedId === null
+                      ? null
+                      : objectBounds[activeSelectedId] ?? null
+                  }
+                  alignCount={selectedIds.length}
+                  onSeatFloor={handleSeatFloor}
+                  onCentre={handleCentre}
+                  onAlign={handleAlign}
                   onName={handleNameChange}
                   onPosition={handleEditPosition}
                   onRotation={handleEditRotation}
@@ -1473,6 +1761,27 @@ export default function Home() {
                   }
                   onApplyPlacement={handleApplyPlacement}
                   onApplyParams={handleApplyParams}
+                />
+                <MotionPanel
+                  track={activeTrack}
+                  duration={motionDuration}
+                  playhead={playhead}
+                  playing={playing}
+                  canAnimate={
+                    selectedObject !== null &&
+                    selectedObject.instances.length <= 1 &&
+                    !selectedObject.locked
+                  }
+                  busy={busy}
+                  onPlay={handlePlay}
+                  onScrub={(time) => {
+                    setPlaying(false);
+                    setPlayhead(time);
+                  }}
+                  onAddKey={handleAddKey}
+                  onRemoveKey={handleRemoveKey}
+                  onToggleTrack={handleToggleTrack}
+                  onDuration={handleDuration}
                 />
               </>
             }

@@ -26,6 +26,9 @@ MAX_INSTANCES = 12
 MAX_RELATIONSHIPS = 8
 MAX_GROUPS = 8
 MAX_COMPONENT_ID_LENGTH = 40
+MAX_MOTION_KEYS = 24
+MAX_MOTION_TRACKS = 24
+MAX_MOTION_DURATION_S = 120.0
 
 COMPONENT_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 
@@ -204,6 +207,63 @@ class AssemblyGroup(BaseModel):
         return value
 
 
+class MotionKey(Transform):
+    """One pose at one time, in the same XYZ Euler degrees as a transform.
+
+    Keys are scene metadata: they drive the viewer only. Nothing in the
+    engine reads them, so an animated assembly still exports the geometry
+    at its stored transforms.
+    """
+
+    t: float = Field(ge=0.0, le=MAX_MOTION_DURATION_S)
+
+
+class MotionTrack(BaseModel):
+    """Keyframes for one component. Times are seconds from the scene start."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    component_id: str = Field(min_length=1, max_length=MAX_COMPONENT_ID_LENGTH)
+    keys: list[MotionKey] = Field(min_length=1, max_length=MAX_MOTION_KEYS)
+    loop: bool = True
+
+    @field_validator("keys")
+    @classmethod
+    def keys_ordered(cls, value: list[MotionKey]) -> list[MotionKey]:
+        ordered = sorted(value, key=lambda key: key.t)
+        for earlier, later in zip(ordered, ordered[1:], strict=False):
+            if abs(later.t - earlier.t) < 1e-6:
+                raise ValueError("two motion keys share the same time")
+        return ordered
+
+
+class SceneAnimation(BaseModel):
+    """Playback metadata for an assembly (viewer only, never exported).
+
+    Kept optional on schema 4.1 rather than bumping the document version:
+    animations are presentation, and a stored revision must keep rebuilding
+    whether or not it carries one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    duration: float = Field(default=4.0, gt=0.0, le=MAX_MOTION_DURATION_S)
+    tracks: list[MotionTrack] = Field(
+        default_factory=list, max_length=MAX_MOTION_TRACKS
+    )
+
+    @field_validator("tracks")
+    @classmethod
+    def one_track_per_component(cls, value: list[MotionTrack]) -> list[MotionTrack]:
+        ids = [track.component_id for track in value]
+        dupes = {i for i in ids if ids.count(i) > 1}
+        if dupes:
+            raise ValueError(
+                "duplicate motion track(s): " + ", ".join(sorted(dupes))
+            )
+        return value
+
+
 class AssemblySpec(BaseModel):
     """Top-level validated assembly specification, schema 4.1."""
 
@@ -217,6 +277,7 @@ class AssemblySpec(BaseModel):
     schema_version: Literal["4.0", "4.1"] = ASSEMBLY_SCHEMA_VERSION
     components: list[ComponentInstance] = Field(min_length=1, max_length=MAX_COMPONENTS)
     groups: list[AssemblyGroup] = Field(default_factory=list, max_length=MAX_GROUPS)
+    animation: SceneAnimation | None = None
 
     @field_validator("name")
     @classmethod
@@ -255,6 +316,19 @@ class AssemblySpec(BaseModel):
         dupe_groups = {g for g in group_ids if group_ids.count(g) > 1}
         if dupe_groups:
             raise ValueError("duplicate group id(s): " + ", ".join(sorted(dupe_groups)))
+        if self.animation is not None:
+            for track in self.animation.tracks:
+                if track.component_id not in known:
+                    raise ValueError(
+                        f"motion track references missing component "
+                        f"'{track.component_id}'"
+                    )
+                for key in track.keys:
+                    if key.t > self.animation.duration:
+                        raise ValueError(
+                            f"motion key at {key.t}s is past the "
+                            f"{self.animation.duration}s duration"
+                        )
         grouped: dict[str, str] = {}
         for group in self.groups:
             for member in group.component_ids:

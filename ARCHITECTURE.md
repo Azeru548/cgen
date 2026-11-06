@@ -57,11 +57,27 @@ Next.js 16 + React 19 + R3F + Firebase. Routes: `/` landing,
   `lib/projectStore.ts`); guests in-memory. Revisions store the full
   `GenerateResponse` (spec + URLs) — specs survive, file links expire.
 - Viewer: `components/cad/CadViewport.tsx + StlModel.tsx`. Per-object STL
-  fetch→parse→recenter; `TransformControls` translate; selection color;
+  fetch→parse→recenter; `TransformControls` translate/rotate; selection color;
   reframe on first-load / 1.5× change / reset only. Bridge:
   `lib/assembly.ts:sceneObjects()`.
+- Coordinates: CAD is Z-up and three.js is Y-up, so the whole scene renders
+  inside a `rotation={[-π/2,0,0]}` wrapper. Stored transforms therefore stay in
+  CAD axes (Z is height, as in the inspector and the exported STEP) and mesh
+  rotations use Euler order `ZYX`, which is the backend's X→Y→Z composition.
+  The well shows a live DRO (pos/rot/size) and an origin axis cross; front /
+  top / right / iso views and a perspective↔orthographic switch drive
+  `FrameCamera`.
+- Animated parts: `assembly.animation` (schema 4.1, optional) holds per-component
+  keyframes. `MotionPose` samples them on the render loop, so playback costs no
+  React renders; the clock is only mirrored into state ~10 Hz for the scrub bar.
+  Animation never reaches the engine — exports use the stored transforms.
+- Measure: two clicks on the model give a distance chip plus CAD-axis deltas;
+  `MeasureOverlay` is drawn in world space, so no scene-graph changes.
 - Inspector: `AssemblyTree + ObjectInspector`. Placement, name, visibility,
-  group, lock, and remove commit locally and keep existing mesh URLs.
+  group, lock, remove, duplicate, seat/centre/align, and motion commit locally
+  and keep existing mesh URLs. Drag snap (free / 1 / 5 / 10 mm) quantises the
+  moved part and applies the same delta to grouped companions. `Bom` lists
+  parts by registry type, counting one part per instance.
   Parameter Apply and library add hit `/assembly/update` / `/assembly/add`
   with prior `component_files` so unchanged solids are not re-exported;
   the viewer overlay still runs for the whole request, however short, so

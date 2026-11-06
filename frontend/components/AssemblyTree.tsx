@@ -17,6 +17,7 @@ interface AssemblyTreeProps {
   onGroup: () => void;
   onUngroup: () => void;
   onLock: () => void;
+  onDuplicate: () => void;
   onFocus?: (id: string) => void;
   busy: boolean;
 }
@@ -34,6 +35,7 @@ export function AssemblyTree({
   onGroup,
   onUngroup,
   onLock,
+  onDuplicate,
   busy,
 }: AssemblyTreeProps) {
   const selected = new Set(selectedIds);
@@ -195,6 +197,15 @@ export function AssemblyTree({
               }
             >
               {allLocked ? "Unlock" : "Lock"}
+            </button>
+            <button
+              type="button"
+              className="assembly-bulk-button"
+              onClick={onDuplicate}
+              disabled={busy || selectedId === null}
+              title="Copy the selected part beside itself"
+            >
+              Duplicate
             </button>
           </div>
         </div>

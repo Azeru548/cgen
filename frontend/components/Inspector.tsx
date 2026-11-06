@@ -21,6 +21,7 @@ interface InspectorProps {
   remintBusy?: boolean;
   parametric?: ReactNode;
   assembly?: ReactNode;
+  bom?: ReactNode;
 }
 
 export function Inspector({
@@ -32,6 +33,7 @@ export function Inspector({
   remintBusy,
   parametric,
   assembly,
+  bom,
 }: InspectorProps) {
   return (
     <>
@@ -52,6 +54,7 @@ export function Inspector({
         {result && status === "ready" ? (
           <Downloads result={result} onRemint={onRemint} remintBusy={remintBusy} />
         ) : null}
+        {result && status === "ready" ? bom : null}
       </div>
     </>
   );

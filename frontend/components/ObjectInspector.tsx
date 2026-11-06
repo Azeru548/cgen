@@ -1,7 +1,7 @@
 "use client";
 
 import type { CatalogComponent, ParamValue } from "@/types/api";
-import type { SceneObject } from "@/lib/assembly";
+import type { ObjectBounds, SceneObject } from "@/lib/assembly";
 import { formatMm } from "@/lib/spec";
 
 interface ObjectInspectorProps {
@@ -14,6 +14,13 @@ interface ObjectInspectorProps {
   placementDirty: boolean;
   paramsDirty: boolean;
   busy: boolean;
+  /** Local mesh bounds of the selected object; null until its STL is parsed. */
+  bounds: ObjectBounds | null;
+  /** Ticked objects, including the active one. */
+  alignCount: number;
+  onSeatFloor: () => void;
+  onCentre: (axis: 0 | 1 | 2) => void;
+  onAlign: (axis: 0 | 1 | 2) => void;
   onName: (value: string) => void;
   onPosition: (axis: 0 | 1 | 2, value: number) => void;
   onRotation: (axis: 0 | 1 | 2, value: number) => void;
@@ -32,6 +39,11 @@ export function ObjectInspector({
   placementDirty,
   paramsDirty,
   busy,
+  bounds,
+  alignCount,
+  onSeatFloor,
+  onCentre,
+  onAlign,
   onName,
   onPosition,
   onRotation,
@@ -94,6 +106,56 @@ export function ObjectInspector({
           </label>
         ))}
       </div>
+      <div className="object-quick" role="group" aria-label="Placement quick actions">
+        <button
+          type="button"
+          className="object-quick-button"
+          onClick={onSeatFloor}
+          disabled={busy || object.locked || bounds === null}
+          title="Put the bottom of this part on Z = 0"
+        >
+          Seat Z
+        </button>
+        <button
+          type="button"
+          className="object-quick-button"
+          onClick={() => onCentre(0)}
+          disabled={busy || object.locked || bounds === null}
+          title="Centre this part on X = 0"
+        >
+          Centre X
+        </button>
+        <button
+          type="button"
+          className="object-quick-button"
+          onClick={() => onCentre(1)}
+          disabled={busy || object.locked || bounds === null}
+          title="Centre this part on Y = 0"
+        >
+          Centre Y
+        </button>
+      </div>
+      {alignCount > 1 ? (
+        <div
+          className="object-quick"
+          role="group"
+          aria-label="Align to the ticked parts"
+        >
+          <span className="object-quick-label">Align</span>
+          {(["X", "Y", "Z"] as const).map((label, axis) => (
+            <button
+              key={label}
+              type="button"
+              className="object-quick-button"
+              onClick={() => onAlign(axis as 0 | 1 | 2)}
+              disabled={busy || object.locked || bounds === null}
+              title={`Match the ${label} centre of the ticked parts to this one`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <button
         type="button"
         className="object-apply"

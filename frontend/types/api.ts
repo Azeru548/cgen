@@ -218,6 +218,25 @@ export interface AssemblyGroup {
   component_ids: string[];
 }
 
+/** One pose at one time (seconds). Same XYZ Euler degrees as a transform. */
+export interface MotionKey {
+  t: number;
+  position: [number, number, number];
+  rotation: [number, number, number];
+}
+
+/** Keyframes for one component. Viewer metadata; never exported. */
+export interface MotionTrack {
+  component_id: string;
+  keys: MotionKey[];
+  loop?: boolean;
+}
+
+export interface SceneAnimation {
+  duration: number;
+  tracks: MotionTrack[];
+}
+
 export interface AssemblySpecification {
   document_type: "3d_assembly";
   units: "mm";
@@ -226,6 +245,8 @@ export interface AssemblySpecification {
   schema_version: "4.0" | "4.1";
   components: ComponentInstance[];
   groups?: AssemblyGroup[];
+  /** Optional playback metadata; adding it does not change the geometry. */
+  animation?: SceneAnimation | null;
 }
 
 export type DocumentSpecification = CadSpecification | AssemblySpecification;

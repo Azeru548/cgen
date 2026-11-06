@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.ai import groq_client
@@ -790,3 +791,123 @@ def test_combined_files_reused_only_when_nothing_rebuilt(monkeypatch, tmp_path):
     assert calls == []
     assert result.files["step"].download_url == "/download/combined?format=step"
     assert result.component_files["box_1"]["stl"].download_url == "/download/box?format=stl"
+
+
+# --- motion metadata (schema 4.1, viewer only) --------------------------------
+
+
+def _two_part_assembly(animation=None):
+    box = {
+        "document_type": "3d_part",
+        "units": "mm",
+        "name": "block",
+        "operation": {"type": "box", "width": 40, "depth": 40, "height": 20},
+    }
+    return AssemblySpec(
+        name="animated",
+        schema_version="4.1",
+        components=[
+            ComponentInstance(
+                id="generated_part_1",
+                component_type="generated_part",
+                name="Block",
+                generated=CADSpec.model_validate(box),
+            ),
+            ComponentInstance(
+                id="generated_part_2",
+                component_type="generated_part",
+                name="Block 2",
+                generated=CADSpec.model_validate({**box, "name": "block_2"}),
+            ),
+        ],
+        animation=animation
+        if animation is not None
+        else {
+            "duration": 4.0,
+            "tracks": [
+                {
+                    "component_id": "generated_part_1",
+                    "keys": [
+                        {"t": 0.0, "position": [0, 0, 0]},
+                        {"t": 2.0, "position": [0, 0, 40], "rotation": [0, 0, 90]},
+                    ],
+                }
+            ],
+        },
+    )
+
+
+def test_motion_keys_are_sorted_on_validation():
+    spec = _two_part_assembly()
+    track = spec.animation.tracks[0]
+    assert [key.t for key in track.keys] == [0.0, 2.0]
+    key = track.keys[1]
+    assert key.position == (0.0, 0.0, 40.0)
+    assert key.rotation == (0.0, 0.0, 90.0)
+
+
+def test_motion_rejects_unknown_component():
+    with pytest.raises(Exception, match="missing component"):
+        _two_part_assembly(
+            animation={
+                "duration": 4.0,
+                "tracks": [
+                    {
+                        "component_id": "nope_1",
+                        "keys": [{"t": 0.0}],
+                    }
+                ],
+            }
+        )
+
+
+def test_motion_rejects_key_past_duration():
+    with pytest.raises(Exception, match="past the"):
+        _two_part_assembly(
+            animation={
+                "duration": 1.0,
+                "tracks": [
+                    {
+                        "component_id": "generated_part_1",
+                        "keys": [{"t": 0.0}, {"t": 5.0}],
+                    }
+                ],
+            }
+        )
+
+
+def test_motion_rejects_duplicate_key_times():
+    with pytest.raises(Exception, match="same time"):
+        _two_part_assembly(
+            animation={
+                "duration": 4.0,
+                "tracks": [
+                    {
+                        "component_id": "generated_part_1",
+                        "keys": [{"t": 1.0}, {"t": 1.0}],
+                    }
+                ],
+            }
+        )
+
+
+def test_rebuild_keeps_motion_metadata(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.assembly.export_assembly_document", _fake_export
+    )
+    spec = _two_part_assembly()
+    # The stored revision predates the animation; adding motion is not a
+    # geometry change, so the rebuild must keep the new metadata as given.
+    base = spec.model_copy(update={"animation": None})
+    r = client.post(
+        "/rebuild",
+        json={
+            "base_specification": base.model_dump(),
+            "specification": spec.model_dump(),
+        },
+    )
+    assert r.status_code == 200, r.text
+    animation = r.json()["specification"]["animation"]
+    assert animation["duration"] == 4.0
+    assert animation["tracks"][0]["component_id"] == "generated_part_1"
+    assert len(animation["tracks"][0]["keys"]) == 2

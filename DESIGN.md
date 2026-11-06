@@ -76,6 +76,10 @@ Nameplates, revision items (active = signal border, no side-stripe), model libra
 - **Prompt bar** is **Generate** with nothing selected (a new independent object, even if the scene already has parts) and **Modify** when an object is selected.
 - **Object inspector** shows name, XYZ mm / Euler degrees, and registry parameters. Dirty values raise a red cage tick; **Apply** settles the tick. Neither writes a revision until the explicit button.
 - **Viewer** renders each component’s local STL at its transform. Repeated fasteners share one definition and N instance poses. Camera still frames on first load, reset, or a large size change only.
+- **Well instruments**: a live DRO (pos / rot / size, signal while dragging), an origin axis cross, standard views (Front / Top / Right / Iso) with a Persp/Ortho switch centred at the top, a snap switch (Free / 1 / 5 / 10 mm) beside Move/Rotate, and **Measure** — two clicks, then a mono distance chip with CAD-axis deltas.
+- **Placement quick actions**: Seat Z, Centre X, Centre Y, plus Align X/Y/Z when two or more parts are ticked (the active part is the datum). **Duplicate** copies the selected part beside itself, reusing its STL.
+- **Motion**: per-part keyframes with a scrub row, Length field, Key here, and a key list. Viewer-only metadata — the drawing and the exports never animate.
+- **Bill of materials**: parts grouped by registry type, quantities count instances, one hairline table below the downloads.
 - **Single-part** documents (schema 3.3) still occupy the scene as one generated object so the tree stays available.
 
 ## Accessibility
@@ -93,4 +97,4 @@ Nameplates, revision items (active = signal border, no side-stripe), model libra
 
 ## Verified
 
-- `tsc --noEmit` clean · vitest **114** (11 files) · eslint 0 errors · workspace is a fixed app shell (no page scroll; inspector-only scroll).
+- `tsc --noEmit` clean · vitest **136** (11 files) · backend **428** · workspace is a fixed app shell (no page scroll; inspector-only scroll).

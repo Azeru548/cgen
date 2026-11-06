@@ -1,21 +1,40 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import * as THREE from "three";
-import { Canvas, useThree } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import {
   ContactShadows,
   Environment,
   GizmoHelper,
   GizmoViewport,
   Grid,
+  Html,
   Lightformer,
+  Line,
   OrbitControls,
+  OrthographicCamera,
+  PerspectiveCamera,
   TransformControls,
 } from "@react-three/drei";
-import { FrameCamera, StlModel, type PreviewState } from "./StlModel";
+import {
+  FrameCamera,
+  StlModel,
+  type PreviewState,
+  type ViewName,
+} from "./StlModel";
 import { GenerationLoader } from "../GenerationLoader";
 import { DEFAULT_MATERIAL_ID, MATERIALS, type MaterialId } from "@/lib/materials";
+import { sampleTrack, type ObjectBounds } from "@/lib/assembly";
+import type { MotionTrack, SceneAnimation } from "@/types/api";
 
 export const EXAMPLE_PROMPTS = [
   "Create a 100mm × 60mm × 30mm rectangular block.",
@@ -42,8 +61,33 @@ export interface SceneViewObject {
   gizmo?: boolean;
 }
 
+/** Live numbers for the selected object. Position/rotation come from the
+ *  editor (its drafts update on every drag frame); the size comes from the
+ *  parsed mesh, so it is the built part's envelope, not the requested one. */
+export interface ViewerReadout {
+  id: string;
+  name: string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  /** Active instance of a repeated component; -1 targets the component. */
+  instanceIndex?: number;
+}
+
 interface CadViewportProps {
   objects: SceneViewObject[];
+  /** Selected object's live pose/size readout; null hides the DRO. */
+  readout?: ViewerReadout | null;
+  /** Reports each parsed mesh's local bounds so the editor can seat/centre it. */
+  onBounds?: (id: string, bounds: ObjectBounds) => void;
+  /** Drag snap step in millimetres; 0 disables snapping. */
+  snapMm?: number;
+  onSnapChange?: (step: number) => void;
+  /** Scene motion metadata (viewer only, never exported). */
+  animation?: SceneAnimation | null;
+  playing?: boolean;
+  playhead?: number;
+  /** Reports the clock while playing (~10 Hz, for the scrub bar). */
+  onPlayhead?: (time: number) => void;
   busy: boolean;
   previewError: string | null;
   onPreviewStatus: (state: PreviewState, message?: string) => void;
@@ -71,6 +115,174 @@ interface CadViewportProps {
 
 type GizmoMode = "translate" | "rotate";
 
+const ORIGIN_POSE: [number, number, number] = [0, 0, 0];
+
+/** Shared scene clock: one source of truth for every animated part. */
+export interface MotionClockRef {
+  current: { time: number; playing: boolean };
+}
+
+/** Advances the clock while playing and reports it for the scrub bar. */
+function MotionTicker({
+  clock,
+  duration,
+  onTick,
+}: {
+  clock: MotionClockRef;
+  duration: number;
+  onTick?: (time: number) => void;
+}) {
+  const lastReport = useRef(0);
+  useFrame((_, delta) => {
+    if (!clock.current.playing) return;
+    const span = Math.max(duration, 0.2);
+    clock.current.time = (clock.current.time + delta) % span;
+    const now = performance.now();
+    if (now - lastReport.current > 100) {
+      lastReport.current = now;
+      onTick?.(clock.current.time);
+    }
+  });
+  return null;
+}
+
+/** Applies a track's sampled pose to the part it wraps. `track: null` leaves
+ *  the part at the pose its StlModel props already carry. */
+function MotionPose({
+  track,
+  clock,
+  playhead,
+  children,
+}: {
+  track: MotionTrack | null;
+  clock: MotionClockRef;
+  playhead: number;
+  children: ReactNode;
+}) {
+  const node = useRef<THREE.Group>(null);
+  useFrame(() => {
+    const group = node.current;
+    if (!group) return;
+    if (track === null) {
+      group.position.set(0, 0, 0);
+      group.rotation.set(0, 0, 0);
+      return;
+    }
+    const time = clock.current.playing ? clock.current.time : playhead;
+    const pose = sampleTrack(track, time);
+    group.position.set(pose.position[0], pose.position[1], pose.position[2]);
+    group.rotation.set(
+      (pose.rotation[0] * Math.PI) / 180,
+      (pose.rotation[1] * Math.PI) / 180,
+      (pose.rotation[2] * Math.PI) / 180,
+      "ZYX",
+    );
+  });
+  return <group ref={node}>{children}</group>;
+}
+
+const VIEW_BUTTONS: Array<{ view: ViewName; label: string; title: string }> = [
+  { view: "front", label: "Front", title: "Look at the front (CAD −Y)" },
+  { view: "top", label: "Top", title: "Look down from above (CAD +Z)" },
+  { view: "right", label: "Right", title: "Look at the right side (CAD +X)" },
+  { view: "iso", label: "Iso", title: "Three-quarter view" },
+];
+
+/** Two-point distance measurement, drawn in world space over the CAD frame.
+ *  Points arrive in world coordinates; the delta is converted back to CAD
+ *  axes (X, Y, Z-up) so the numbers match the inspector. */
+function MeasureOverlay({
+  points,
+  scale,
+}: {
+  points: THREE.Vector3[];
+  scale: number;
+}) {
+  if (points.length === 0) return null;
+  const dot = Math.max(scale * 0.006, 0.5);
+  const pair = points.length === 2 ? points : null;
+  const distance = pair ? pair[0].distanceTo(pair[1]) : 0;
+  const cad = pair
+    ? {
+        dx: pair[1].x - pair[0].x,
+        dy: -(pair[1].z - pair[0].z),
+        dz: pair[1].y - pair[0].y,
+      }
+    : null;
+  return (
+    <>
+      {points.map((point, index) => (
+        <mesh key={`measure-point-${index}`} position={point}>
+          <sphereGeometry args={[dot, 12, 12]} />
+          <meshBasicMaterial color="#e8eaed" />
+        </mesh>
+      ))}
+      {pair ? (
+        <>
+          <Line
+            points={[pair[0], pair[1]]}
+            color="#e8eaed"
+            lineWidth={1.4}
+            dashed={false}
+          />
+          <Html
+            position={pair[0].clone().add(pair[1]).multiplyScalar(0.5)}
+            center
+            className="measure-label"
+            zIndexRange={[20, 0]}
+          >
+            <span className="measure-value">{distance.toFixed(2)} mm</span>
+            {cad ? (
+              <span className="measure-delta">
+                {cad.dx.toFixed(1)} · {cad.dy.toFixed(1)} · {cad.dz.toFixed(1)}
+              </span>
+            ) : null}
+          </Html>
+        </>
+      ) : null}
+    </>
+  );
+}
+
+/** Axis cross at the world origin: without it "zero" is implied, never seen. */
+function OriginMarker({ scale }: { scale: number }) {
+  const length = Math.max(scale * 0.14, 8);
+  const thickness = Math.max(scale * 0.005, 0.4);
+  const axes: Array<{
+    position: [number, number, number];
+    size: [number, number, number];
+    color: string;
+  }> = [
+    { position: [length / 2, 0, 0], size: [length, thickness, thickness], color: "#cc2936" },
+    { position: [0, length / 2, 0], size: [thickness, length, thickness], color: "#6a7280" },
+    { position: [0, 0, length / 2], size: [thickness, thickness, length], color: "#e8eaed" },
+  ];
+  return (
+    <group>
+      {axes.map((axis) => (
+        <mesh key={axis.color} position={axis.position}>
+          <boxGeometry args={axis.size} />
+          <meshBasicMaterial color={axis.color} transparent opacity={0.45} />
+        </mesh>
+      ))}
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[length * 0.42, length * 0.46, 48]} />
+        <meshBasicMaterial
+          color="#e8eaed"
+          transparent
+          opacity={0.18}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+/** DRO numeral: one decimal, em dash when the value is not finite. */
+function dro(value: number): string {
+  return Number.isFinite(value) ? value.toFixed(1) : "—";
+}
+
 function eulerToDeg(e: THREE.Euler): [number, number, number] {
   return [
     (e.x * 180) / Math.PI,
@@ -92,11 +304,17 @@ function SelectableObject({
   onRotateStart,
   onMoveEnd,
   onGeometry,
+  onBounds,
   onPreviewStatus,
   onSelectObject,
   liveScale,
   onOrbitEnabledChange,
   material,
+  motion,
+  clock,
+  playhead,
+  measure,
+  onMeasure,
 }: {
   object: SceneViewObject;
   canDrag: boolean;
@@ -107,6 +325,8 @@ function SelectableObject({
   onRotateStart?: () => void;
   onMoveEnd?: () => void;
   onGeometry: () => void;
+  /** Reports the mesh's local bounds (mm) for the DRO and placement tools. */
+  onBounds?: (id: string, bounds: ObjectBounds) => void;
   onPreviewStatus: (state: PreviewState, message?: string) => void;
   onSelectObject?: (
     id: string | null,
@@ -116,6 +336,11 @@ function SelectableObject({
   liveScale?: [number, number, number] | null;
   onOrbitEnabledChange?: (enabled: boolean) => void;
   material: MaterialId;
+  motion?: SceneAnimation | null;
+  clock: MotionClockRef;
+  playhead: number;
+  measure?: boolean;
+  onMeasure?: (point: THREE.Vector3) => void;
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const rotateRef = useRef<THREE.Group>(null);
@@ -127,6 +352,11 @@ function SelectableObject({
   // move); >=0 targets one instance of a repeated component.
   const activeIndex = object.activeInstanceIndex ?? -1;
   const hasInstances = object.instances.length > 0;
+  // Repeated components are placed by instance poses, so a track would have
+  // nowhere to live; the editor disables motion for them.
+  const track =
+    motion?.tracks.find((item) => item.component_id === object.id) ?? null;
+  const animated = track !== null && !hasInstances;
 
   const setGroup = useCallback((node: THREE.Group | null) => {
     groupRef.current = node;
@@ -146,6 +376,24 @@ function SelectableObject({
   }, []);
 
   const pivotPosition: [number, number, number] = object.position;
+
+  // The parsed mesh is already centered on its own bbox, so its bounding box
+  // is the part's true envelope — report it for the DRO and placement tools.
+  const handleGeometry = useCallback(
+    (geometry: THREE.BufferGeometry | null) => {
+      onGeometry();
+      if (!geometry || !onBounds) return;
+      geometry.computeBoundingBox();
+      const box = geometry.boundingBox;
+      if (!box) return;
+      const size = box.getSize(new THREE.Vector3());
+      onBounds(object.id, {
+        min: [box.min.x, box.min.y, box.min.z],
+        size: [size.x, size.y, size.z],
+      });
+    },
+    [onGeometry, onBounds, object.id],
+  );
 
   // NOTE: TransformControls MUST stay a sibling of the group it drives.
   // drei renders its gizmo helper as a child of wherever this element
@@ -175,7 +423,7 @@ function SelectableObject({
               <StlModel
                 url={object.url}
                 onStatus={onPreviewStatus}
-                onGeometry={onGeometry}
+                onGeometry={handleGeometry}
                 scale={liveScale}
                 position={pose.position}
                 rotationDeg={pose.rotation}
@@ -185,26 +433,32 @@ function SelectableObject({
                 instanceIndex={index}
                 onSelect={onSelectObject}
                 material={material}
+                measure={measure}
+                onMeasure={onMeasure}
               />
             </group>
           ))}
         </>
       ) : (
         <group ref={setGroup}>
-          <StlModel
-            url={object.url}
-            onStatus={onPreviewStatus}
-            onGeometry={onGeometry}
-            scale={liveScale}
-            position={object.position}
-            rotationDeg={object.rotation}
-            recenter={object.recenter}
-            selected={object.selected}
-            objectId={object.id}
-            instanceIndex={-1}
-            onSelect={onSelectObject}
-            material={material}
-          />
+          <MotionPose track={animated ? track : null} clock={clock} playhead={playhead}>
+            <StlModel
+              url={object.url}
+              onStatus={onPreviewStatus}
+              onGeometry={handleGeometry}
+              scale={liveScale}
+              position={animated ? ORIGIN_POSE : object.position}
+              rotationDeg={animated ? ORIGIN_POSE : object.rotation}
+              recenter={object.recenter}
+              selected={object.selected}
+              objectId={object.id}
+              instanceIndex={-1}
+              onSelect={onSelectObject}
+              material={material}
+              measure={measure}
+              onMeasure={onMeasure}
+            />
+          </MotionPose>
         </group>
       )}
 
@@ -290,6 +544,7 @@ function DragGroup({
   onRotateStart,
   onMoveEnd,
   onGeometry,
+  onBounds,
   onPreviewStatus,
   onSelectObject,
   liveScale,
@@ -300,6 +555,12 @@ function DragGroup({
   onOrbitEnabledChange,
   material,
   onScale,
+  viewRequest,
+  motion,
+  clock,
+  playhead,
+  measure,
+  onMeasure,
 }: {
   objects: SceneViewObject[];
   canDrag: boolean;
@@ -310,6 +571,8 @@ function DragGroup({
   onRotateStart?: () => void;
   onMoveEnd?: () => void;
   onGeometry: () => void;
+  /** Reports the mesh's local bounds (mm) for the DRO and placement tools. */
+  onBounds?: (id: string, bounds: ObjectBounds) => void;
   onPreviewStatus: (state: PreviewState, message?: string) => void;
   onSelectObject?: (
     id: string | null,
@@ -324,30 +587,47 @@ function DragGroup({
   onOrbitEnabledChange?: (enabled: boolean) => void;
   material: MaterialId;
   onScale: (maxDim: number) => void;
+  viewRequest?: { id: number; view: ViewName } | null;
+  motion?: SceneAnimation | null;
+  clock: MotionClockRef;
+  playhead: number;
+  measure?: boolean;
+  onMeasure?: (point: THREE.Vector3) => void;
 }) {
   const [outerNode, setOuterNode] = useState<THREE.Group | null>(null);
 
   return (
     <group ref={setOuterNode}>
-      {objects.map((object) => (
-        <SelectableObject
-          key={object.id}
-          object={object}
-          canDrag={canDrag}
-          gizmoMode={gizmoMode}
-          onMoveDelta={onMoveDelta}
-          onRotateDelta={onRotateDelta}
-          onMoveStart={onMoveStart}
-          onRotateStart={onRotateStart}
-          onMoveEnd={onMoveEnd}
-          onGeometry={onGeometry}
-          onPreviewStatus={onPreviewStatus}
-          onSelectObject={onSelectObject}
-          liveScale={liveScale}
-          onOrbitEnabledChange={onOrbitEnabledChange}
-          material={material}
-        />
-      ))}
+      {/* CAD documents are Z-up; three.js is Y-up. Rotating the whole scene
+          once keeps every stored transform in CAD axes (Z is up, as in the
+          inspector and the exported STEP) while the viewer stays Y-up. */}
+      <group rotation={[-Math.PI / 2, 0, 0]}>
+        {objects.map((object) => (
+          <SelectableObject
+            key={object.id}
+            object={object}
+            canDrag={canDrag}
+            gizmoMode={gizmoMode}
+            onMoveDelta={onMoveDelta}
+            onRotateDelta={onRotateDelta}
+            onMoveStart={onMoveStart}
+            onRotateStart={onRotateStart}
+            onMoveEnd={onMoveEnd}
+            onGeometry={onGeometry}
+            onBounds={onBounds}
+            onPreviewStatus={onPreviewStatus}
+            onSelectObject={onSelectObject}
+            liveScale={liveScale}
+            onOrbitEnabledChange={onOrbitEnabledChange}
+            material={material}
+            motion={motion}
+            clock={clock}
+            playhead={playhead}
+            measure={measure}
+            onMeasure={onMeasure}
+          />
+        ))}
+      </group>
 
       <FrameCamera
         group={outerNode}
@@ -356,6 +636,7 @@ function DragGroup({
         floorY={floorY}
         hasContent={hasContent}
         onScale={onScale}
+        viewRequest={viewRequest}
       />
     </group>
   );
@@ -391,6 +672,14 @@ export function CadViewport({
   onRotateStart,
   onMoveEnd,
   canDrag = false,
+  readout = null,
+  onBounds,
+  snapMm = 0,
+  onSnapChange,
+  animation = null,
+  playing = false,
+  playhead = 0,
+  onPlayhead,
 }: CadViewportProps) {
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("translate");
   const [contentRev, setContentRev] = useState(0);
@@ -399,6 +688,26 @@ export function CadViewport({
   const [orbitEnabled, setOrbitEnabled] = useState(true);
   const [sceneScale, setSceneScale] = useState(120);
   const [material, setMaterial] = useState<MaterialId>(DEFAULT_MATERIAL_ID);
+  const [bounds, setBounds] = useState<Record<string, ObjectBounds>>({});
+  const [view, setView] = useState<ViewName>("iso");
+  const [viewId, setViewId] = useState(0);
+  const clockRef = useRef<{ time: number; playing: boolean }>({
+    time: 0,
+    playing: false,
+  });
+  // Playback runs on the render loop; only the scrub bar follows React state.
+  useEffect(() => {
+    clockRef.current.playing = playing;
+  }, [playing]);
+  useEffect(() => {
+    if (!playing) clockRef.current.time = playhead;
+  }, [playhead, playing]);
+  const [ortho, setOrtho] = useState(false);
+  const viewRequest = useMemo(() => ({ id: viewId, view }), [viewId, view]);
+  const handleView = useCallback((next: ViewName) => {
+    setView(next);
+    setViewId((n) => n + 1);
+  }, []);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const handleFloorY = useCallback((y: number) => setFloorY(y), []);
   const handleScale = useCallback((maxDim: number) => {
@@ -413,6 +722,50 @@ export function CadViewport({
   const handleOrbitEnabled = useCallback((enabled: boolean) => {
     setOrbitEnabled(enabled);
   }, []);
+  const handleBounds = useCallback(
+    (id: string, next: ObjectBounds) => {
+      setBounds((prev) => {
+        const last = prev[id];
+        if (
+          last &&
+          last.min[0] === next.min[0] &&
+          last.min[1] === next.min[1] &&
+          last.min[2] === next.min[2] &&
+          last.size[0] === next.size[0] &&
+          last.size[1] === next.size[1] &&
+          last.size[2] === next.size[2]
+        ) {
+          return prev;
+        }
+        return { ...prev, [id]: next };
+      });
+      onBounds?.(id, next);
+    },
+    [onBounds],
+  );
+  const [measureMode, setMeasureMode] = useState(false);
+  const [measurePoints, setMeasurePoints] = useState<THREE.Vector3[]>([]);
+  const handleMeasurePoint = useCallback((point: THREE.Vector3) => {
+    // Third click starts a new measurement instead of silently doing nothing.
+    setMeasurePoints((prev) => (prev.length >= 2 ? [point] : [...prev, point]));
+  }, []);
+  const toggleMeasure = useCallback(() => {
+    setMeasureMode((on) => {
+      if (on) setMeasurePoints([]);
+      return !on;
+    });
+  }, []);
+  useEffect(() => {
+    if (!measureMode) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMeasureMode(false);
+        setMeasurePoints([]);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [measureMode]);
   const pointerMoved = useRef(false);
   const clearSelectionIfClick = useCallback(() => {
     if (!pointerMoved.current) onSelectObject?.(null);
@@ -434,6 +787,7 @@ export function CadViewport({
 
   const visible = objects.filter((o) => o.visible && o.url);
   const showEmpty = visible.length === 0 && !busy && !previewError;
+  const readoutSize = readout ? bounds[readout.id]?.size ?? null : null;
 
   return (
     <div className="viewport" data-testid="viewport">
@@ -456,6 +810,23 @@ export function CadViewport({
       >
         <color attach="background" args={["#0e1014"]} />
         <CaptureTarget onCanvas={handleCanvas} />
+        {ortho ? (
+          <OrthographicCamera
+            makeDefault
+            position={[180, 140, 180]}
+            zoom={1}
+            near={-5000}
+            far={50000}
+          />
+        ) : (
+          <PerspectiveCamera
+            makeDefault
+            fov={40}
+            position={[180, 140, 180]}
+            near={0.1}
+            far={50000}
+          />
+        )}
         <ambientLight intensity={0.35} />
         <directionalLight position={[120, 180, 90]} intensity={1.1} />
         {/* A studio built from emissive panels instead of an HDRI file: no
@@ -504,6 +875,7 @@ export function CadViewport({
               onRotateStart={onRotateStart}
               onMoveEnd={onMoveEnd}
               onGeometry={handleGeometry}
+              onBounds={handleBounds}
               onPreviewStatus={onPreviewStatus}
               onSelectObject={onSelectObject}
               liveScale={liveScale}
@@ -514,7 +886,20 @@ export function CadViewport({
               onOrbitEnabledChange={handleOrbitEnabled}
               material={material}
               onScale={handleScale}
+              viewRequest={viewRequest}
+              motion={animation}
+              clock={clockRef}
+              playhead={playhead}
+              measure={measureMode}
+              onMeasure={handleMeasurePoint}
             />
+            <MotionTicker
+              clock={clockRef}
+              duration={animation?.duration ?? 4}
+              onTick={onPlayhead}
+            />
+            <OriginMarker scale={sceneScale} />
+            <MeasureOverlay points={measurePoints} scale={sceneScale} />
           </group>
           <ContactShadows
             key={`${contentRev}-${Math.round(sceneScale)}-${Math.round(floorY)}`}
@@ -566,6 +951,78 @@ export function CadViewport({
         <span className="viewport-tag">{schemaVersion}</span>
       ) : null}
 
+      <div className="viewport-views" role="group" aria-label="Standard views">
+        <div className="material-switch">
+          {VIEW_BUTTONS.map((button) => (
+            <button
+              key={button.view}
+              type="button"
+              className={`material-option${view === button.view ? " is-active" : ""}`}
+              onClick={() => handleView(button.view)}
+              aria-pressed={view === button.view}
+              title={button.title}
+            >
+              {button.label}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className={`viewport-mode${ortho ? " is-active" : ""}`}
+          onClick={() => setOrtho((value) => !value)}
+          aria-pressed={ortho}
+          title={
+            ortho
+              ? "Orthographic projection: switch back to perspective"
+              : "Perspective projection: switch to orthographic"
+          }
+        >
+          {ortho ? "Ortho" : "Persp"}
+        </button>
+      </div>
+
+      {readout ? (
+        <div className="viewport-dro" data-testid="viewport-readout">
+          <div className="viewport-dro-head">
+            <span className="viewport-dro-name">{readout.name}</span>
+            {(readout.instanceIndex ?? -1) >= 0 ? (
+              <span className="viewport-dro-slot">
+                inst {(readout.instanceIndex ?? 0) + 1}
+              </span>
+            ) : null}
+          </div>
+          <div className="viewport-dro-grid">
+            <span />
+            <span className="viewport-dro-axis">X</span>
+            <span className="viewport-dro-axis">Y</span>
+            <span className="viewport-dro-axis">Z</span>
+            <span className="viewport-dro-key">pos</span>
+            {readout.position.map((value, axis) => (
+              <span key={`pos-${axis}`} className="viewport-dro-value">
+                {dro(value)}
+              </span>
+            ))}
+            <span className="viewport-dro-key">rot °</span>
+            {readout.rotation.map((value, axis) => (
+              <span key={`rot-${axis}`} className="viewport-dro-value">
+                {dro(value)}
+              </span>
+            ))}
+            {readoutSize ? (
+              <>
+                <span className="viewport-dro-key">size</span>
+                {readoutSize.map((value, axis) => (
+                  <span key={`size-${axis}`} className="viewport-dro-value">
+                    {dro(value)}
+                  </span>
+                ))}
+              </>
+            ) : null}
+          </div>
+          <span className="viewport-dro-unit">pos / size mm</span>
+        </div>
+      ) : null}
+
       <div className="viewport-toolbar">
         <div className="viewport-controls">
           {canDrag ? (
@@ -594,6 +1051,26 @@ export function CadViewport({
               </button>
             </div>
           ) : null}
+          {canDrag && onSnapChange ? (
+            <div className="material-switch" role="group" aria-label="Drag snap">
+              {[0, 1, 5, 10].map((step) => (
+                <button
+                  key={step}
+                  type="button"
+                  className={`material-option${snapMm === step ? " is-active" : ""}`}
+                  onClick={() => onSnapChange(step)}
+                  aria-pressed={snapMm === step}
+                  title={
+                    step === 0
+                      ? "Move freely"
+                      : `Snap the part to a ${step} mm grid`
+                  }
+                >
+                  {step === 0 ? "Free" : step}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div
             className="material-switch"
             role="group"
@@ -613,7 +1090,14 @@ export function CadViewport({
             ))}
           </div>
           <span className="viewport-hint">
-            drag&nbsp;·&nbsp;orbit&nbsp;&nbsp;&nbsp;shift-click&nbsp;·&nbsp;add
+            {measureMode
+              ? "click two points · esc to stop"
+              : null}
+            {measureMode ? null : (
+              <>
+                drag&nbsp;·&nbsp;orbit&nbsp;&nbsp;&nbsp;shift-click&nbsp;·&nbsp;add
+              </>
+            )}
             {canDrag ? (
               gizmoMode === "rotate" ? (
                 <>&nbsp;&nbsp;&nbsp;rings&nbsp;·&nbsp;rotate part</>
@@ -624,6 +1108,16 @@ export function CadViewport({
           </span>
         </div>
         <div className="viewport-actions">
+          <button
+            type="button"
+            className={`viewport-reset${measureMode ? " is-active" : ""}`}
+            onClick={toggleMeasure}
+            disabled={visible.length === 0}
+            aria-pressed={measureMode}
+            title="Measure the distance between two points"
+          >
+            Measure
+          </button>
           <button
             type="button"
             className="viewport-reset"
