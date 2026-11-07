@@ -69,9 +69,10 @@ Next.js 16 + React 19 + R3F + Firebase. Routes: `/` landing,
   rotations use Euler order `ZYX`, which is the backend's X→Y→Z composition.
   The well shows a live DRO (pos/rot/size) and an origin axis cross; front /
   top / right / iso views and a perspective↔orthographic switch drive
-  `FrameCamera`. `iso` is the default three-quarter view: CAD +Y runs up the
-  screen (`VIEW_UP`), so parts stand upright with the gap between the camera
-  and the model kept at 1.9× the fitting distance. The camera is only placed
+  `FrameCamera`. `iso` is the default three-quarter view: screen-up is world +Y
+  (CAD +Z, `VIEW_UP`), so the grid stays a horizontal floor as the camera
+  orbits, with the gap between the camera and the model kept at 1.9× the
+  fitting distance. The camera is only placed
   on first load, a large size change, Reset, a view button or a projection
   swap — never on a canvas resize, so the user's orbit holds still.
 - Animated parts: `assembly.animation` (schema 4.1, optional) holds per-component

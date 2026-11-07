@@ -165,9 +165,9 @@ export type ViewName = "iso" | "front" | "top" | "right";
  *  CAD→viewer wrapper, so CAD +Z is world +Y: `front` looks along CAD −Y and
  *  `top` looks down CAD −Z, exactly like a drawing's front/top views.
  *
- *  `iso` is the default three-quarter view: CAD +Y runs up the screen and CAD
- *  +Z (the face of a flat part) leans towards the camera, so a board or plate
- *  is read the way it sits on a desk — upright, in 3D, with the grid behind it.
+ *  `iso` is the default three-quarter view from above the front-right corner.
+ *  Screen-up is CAD +Z (true up), so the ground stays a horizontal floor under
+ *  the part and orbiting walks around the model instead of rolling the world.
  *
  *  These are world vectors. In CAD terms `iso` is (1, 0.62, 1) — the viewer's
  *  long-standing default — which is (1, 1, -0.62) here because the scene
@@ -179,10 +179,12 @@ export const VIEW_DIRECTIONS: Record<ViewName, [number, number, number]> = {
   right: [1, 0, 0],
 };
 
-/** Screen-up per view, in world space. Views that look down the CAD Z axis need
- *  CAD +Y up the screen; straight-down views would degenerate, so they roll. */
+/** Screen-up per view, in world space. Every view except the straight-down one
+ *  keeps world +Y (CAD +Z, true up) up the screen, which is the only roll that
+ *  leaves the ground where it is; `top` looks along that axis, so it rolls to
+ *  CAD +Y and does not degenerate. */
 export const VIEW_UP: Record<ViewName, [number, number, number]> = {
-  iso: [0, 0, -1],
+  iso: [0, 1, 0],
   front: [0, 1, 0],
   top: [0, 0, -1],
   right: [0, 1, 0],
