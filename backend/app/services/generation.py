@@ -107,6 +107,8 @@ def run_generation(
     file_store: FileStore,
     artifacts: ArtifactStore | None = None,
     current_spec: dict | None = None,
+    component_files: object = None,
+    files: object = None,
 ) -> GenerationResult:
     """Execute one generation and return the frontend-friendly result.
 
@@ -151,8 +153,16 @@ def run_generation(
                 request_id=request_id,
                 file_store=file_store,
                 artifacts=artifacts,
+                component_files=component_files,
+                files=files,
             )
             result.generation_time_ms = int((time.monotonic() - started) * 1000)
+            logger.info(
+                "attach_completed request_id=%s ai_ms=%d total_ms=%d",
+                request_id,
+                ai_ms,
+                result.generation_time_ms,
+            )
             return result
         if isinstance(spec, AssemblySpec):
             from .assembly import export_assembly_document

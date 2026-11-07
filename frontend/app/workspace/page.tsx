@@ -811,6 +811,23 @@ export default function Home() {
     [objects, hydrateDrafts],
   );
 
+  // File URLs the current scene already owns. Sent with any request that
+  // rebuilds the document so unchanged solids are not re-exported.
+  const reuseFiles = useCallback(() => {
+    if (visible === null) return {};
+    const { files, component_files, specification } = visible.response;
+    if (component_files) return { component_files, files };
+    if (isPartSpec(specification)) {
+      return {
+        component_files: {
+          generated_1: { step: files.step, stl: files.stl },
+        },
+        files,
+      };
+    }
+    return { files };
+  }, [visible]);
+
   const handleGenerate = useCallback(async () => {
     if (status === "generating") return;
     if (prompt.trim().length === 0) {
@@ -831,7 +848,12 @@ export default function Home() {
         visible !== null
           ? (visible.response.specification as unknown as Record<string, unknown>)
           : null;
-      const response = await generatePart(text, controller.signal, host);
+      const response = await generatePart(
+        text,
+        controller.signal,
+        host,
+        host === null ? undefined : reuseFiles(),
+      );
       setProject((p) => appendRevision(p, "generate", text, response));
       setStatus("ready");
       clearDrafts();
@@ -846,7 +868,7 @@ export default function Home() {
       setGenerateError(humanizeApiError(err as ApiError));
       setStatus("error");
     }
-  }, [prompt, status, clearDrafts, visible]);
+  }, [prompt, status, clearDrafts, visible, reuseFiles]);
 
   const handleModify = useCallback(async () => {
     if (status === "generating" || visible === null) return;
@@ -958,21 +980,6 @@ export default function Home() {
     },
     [status],
   );
-
-  const reuseFiles = useCallback(() => {
-    if (visible === null) return {};
-    const { files, component_files, specification } = visible.response;
-    if (component_files) return { component_files, files };
-    if (isPartSpec(specification)) {
-      return {
-        component_files: {
-          generated_1: { step: files.step, stl: files.stl },
-        },
-        files,
-      };
-    }
-    return { files };
-  }, [visible]);
 
   const handleAddComponent = useCallback(
     (type: string, count = 1) => {

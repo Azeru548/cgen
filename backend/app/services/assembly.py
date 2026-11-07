@@ -683,12 +683,16 @@ def attach_document(
     request_id: str,
     file_store: FileStore,
     artifacts: ArtifactStore | None = None,
+    component_files: object = None,
+    files: object = None,
 ) -> GenerationResult:
     """Place a newly generated document beside the current scene.
 
     The new objects keep their internal relationships and get a deterministic
     offset so they do not stack on the existing parts. Nothing is mated to
-    the host — that is the unselected Generate path.
+    the host — that is the unselected Generate path. Only the incoming solids
+    are built: the host's existing files are reused when the caller sends them
+    back, so a prompt on a busy scene does not re-tessellate every part.
     """
     host = as_assembly(current)
     if len(host.components) >= assembly_schema.MAX_COMPONENTS:
@@ -730,6 +734,15 @@ def attach_document(
             "schema_version": assembly_schema.ASSEMBLY_SCHEMA_VERSION,
         }
     )
+    previous, reuse_component_files, reuse_combined = _reuse_context(
+        host, component_files, files
+    )
     return _export(
-        next_spec, request_id=request_id, file_store=file_store, artifacts=artifacts
+        next_spec,
+        request_id=request_id,
+        file_store=file_store,
+        artifacts=artifacts,
+        previous_components=previous,
+        reuse_component_files=reuse_component_files,
+        reuse_combined_files=reuse_combined,
     )

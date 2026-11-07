@@ -127,6 +127,16 @@ class GenerateRequest(BaseModel):
         description="When set, the new part is added beside this existing "
         "document instead of replacing the scene.",
     )
+    component_files: dict | None = Field(
+        default=None,
+        description="Per-component file URLs of `specification` so unchanged "
+        "solids are not rebuilt when the new part is attached.",
+    )
+    files: dict | None = Field(
+        default=None,
+        description="Combined STEP/STL URLs of `specification`; reused only "
+        "while no solid changed.",
+    )
 
 
 class ModifyRequest(BaseModel):
@@ -417,6 +427,8 @@ def generate(body: GenerateRequest, caller: Caller_):
             file_store=file_store,
             artifacts=artifact_store,
             current_spec=body.specification,
+            component_files=body.component_files,
+            files=body.files,
         )
     except InvalidPromptError as e:
         raise HTTPException(status_code=400, detail=str(e))

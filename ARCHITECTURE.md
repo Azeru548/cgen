@@ -90,8 +90,9 @@ Next.js 16 + React 19 + R3F + Firebase. Routes: `/` landing,
   and keep existing mesh URLs. Drag snap (free / 1 / 5 / 10 mm) quantises the
   moved part and applies the same delta to grouped companions. `Bom` lists
   parts by registry type, counting one part per instance.
-  Parameter Apply and library add hit `/assembly/update` / `/assembly/add`
-  with prior `component_files` so unchanged solids are not re-exported;
+  Parameter Apply and library add hit `/assembly/update` / `/assembly/add` —
+  and a Generate that attaches a new part hits `/generate` — with prior
+  `component_files` so unchanged solids are not re-exported;
   the viewer overlay still runs for the whole request, however short, so
   every non-instant change reads as work in progress (the instant local
   commits above — placement, name, visibility, group, lock, remove — never

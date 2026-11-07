@@ -241,10 +241,21 @@ export async function generatePart(
   prompt: string,
   signal?: AbortSignal,
   specification?: Record<string, unknown> | null,
+  reuse?: {
+    component_files?: GenerateResponse["component_files"];
+    files?: GenerateResponse["files"];
+  },
 ): Promise<GenerateResponse> {
   return postJson(
     "/generate",
-    specification ? { prompt, specification } : { prompt },
+    specification
+      ? {
+          prompt,
+          specification,
+          component_files: reuse?.component_files,
+          files: reuse?.files,
+        }
+      : { prompt },
     signal,
     "Generation",
   );
